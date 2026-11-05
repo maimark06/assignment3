@@ -36,3 +36,22 @@ class ExtractTextTests(unittest.TestCase):
 
         self.assertEqual(text, plain_text)
         self.assertEqual(important_text, "")
+
+    def test_scripts_styles_and_comments_are_excluded(self):
+        """Exclude code and comments even inside an important tag."""
+        html = (
+            "<style>hidden stylesheet</style>"
+            "<script>hidden script</script>"
+            "<!-- hidden comment -->"
+            "<p>ordinary text</p>"
+            "<strong>important text"
+            "<script>hidden emphasized script</script>"
+            "<style>hidden emphasized stylesheet</style>"
+            "<!-- hidden emphasized comment -->"
+            "</strong>"
+        )
+
+        text, important_text = extract_text(html)
+
+        self.assertEqual(text, "ordinary text important text")
+        self.assertEqual(important_text, "important text")
