@@ -97,3 +97,43 @@ class IterDocumentsTests(unittest.TestCase):
                     [(doc.doc_id, doc.url, doc.html) for doc in documents],
                     [(0, "https://example.com/valid", "")],
                 )
+
+    def test_unicode_survives_invalid_file_encoding(self):
+        """Preserve Unicode and continue after an undecodable JSON file."""
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            first_html = "<title>中文 café</title>"
+            last_html = "<p>日本語 naïve</p>"
+            (root / "0.json").write_text(
+                json.dumps(
+                    {
+                        "url": "https://example.com/first",
+                        "content": first_html,
+                        "encoding": "iso-8859-1",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8-sig",
+            )
+            (root / "1.json").write_bytes(b'\xff\xfe{"url": "broken"}')
+            (root / "2.json").write_text(
+                json.dumps(
+                    {"url": "https://example.com/last", "content": last_html},
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertLogs("src.corpus", level="WARNING") as logs:
+                documents = list(iter_documents(directory))
+
+        self.assertEqual(
+            [(doc.doc_id, doc.url, doc.html) for doc in documents],
+            [
+                (0, "https://example.com/first", first_html),
+                (1, "https://example.com/last", last_html),
+            ],
+        )
+        self.assertTrue(
+            any("1.json" in record.getMessage() for record in logs.records)
+        )
