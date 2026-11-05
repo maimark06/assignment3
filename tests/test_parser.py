@@ -1,11 +1,32 @@
 """Regression checks for HTML text extraction."""
 
 import unittest
+from types import ModuleType
+from unittest.mock import Mock, patch
 
-from src.parser import extract_text
+from src.parser import extract_text, extract_tokens
 
 
 class ExtractTextTests(unittest.TestCase):
+    def test_extract_tokens_counts_total_and_important_occurrences(self):
+        """Aggregate normalized tokens without adding importance to total TF."""
+        html = "<p>Running runs dog</p><strong>running dog dog</strong>"
+        tokenizer = ModuleType("src.tokenizer")
+        tokenizer.tokenize = Mock(
+            side_effect=[
+                ["run", "run", "dog", "run", "dog", "dog"],
+                ["run", "dog", "dog"],
+            ]
+        )
+
+        with patch.dict("sys.modules", {"src.tokenizer": tokenizer}):
+            result = extract_tokens(html)
+
+        self.assertEqual(result, {"run": (3, 1), "dog": (3, 2)})
+        self.assertEqual(tokenizer.tokenize.call_count, 2)
+        tokenizer.tokenize.assert_any_call("Running runs dog running dog dog")
+        tokenizer.tokenize.assert_any_call("running dog dog")
+
     def test_nested_important_tags_count_each_occurrence_once(self):
         """Nested emphasis must not inflate important-word frequencies."""
         html = (
