@@ -66,3 +66,34 @@ class IterDocumentsTests(unittest.TestCase):
             )
         )
         self.assertIn("1 invalid files skipped", logs.records[-1].getMessage())
+
+    def test_invalid_page_fields_are_skipped(self):
+        """Reject malformed page records while accepting empty HTML content."""
+        invalid_pages = [
+            [],
+            {"content": "missing URL"},
+            {"url": 123, "content": "non-string URL"},
+            {"url": "   ", "content": "blank URL"},
+            {"url": "#section", "content": "fragment-only URL"},
+            {"url": "https://example.com/missing-content"},
+            {"url": "https://example.com/null-content", "content": None},
+            {"url": "https://example.com/list-content", "content": []},
+        ]
+        for invalid_page in invalid_pages:
+            with self.subTest(page=invalid_page), TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "0.json").write_text(
+                    json.dumps(invalid_page), encoding="utf-8"
+                )
+                (root / "1.json").write_text(
+                    json.dumps({"url": "https://example.com/valid", "content": ""}),
+                    encoding="utf-8",
+                )
+
+                with self.assertLogs("src.corpus", level="WARNING"):
+                    documents = list(iter_documents(directory))
+
+                self.assertEqual(
+                    [(doc.doc_id, doc.url, doc.html) for doc in documents],
+                    [(0, "https://example.com/valid", "")],
+                )
