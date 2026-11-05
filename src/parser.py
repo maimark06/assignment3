@@ -1,5 +1,7 @@
 """Extract page text and important text before tokenization."""
 
+from collections import Counter
+
 from bs4 import BeautifulSoup, CData, NavigableString
 
 
@@ -34,3 +36,23 @@ def extract_text(html: str) -> tuple[str, str]:
             important_parts.append(text)
 
     return " ".join(text_parts), " ".join(important_parts)
+
+
+def extract_tokens(html: str) -> dict[str, tuple[int, int]]:
+    """Return each stemmed token's (total frequency, important frequency).
+
+    The teammate-owned tokenizer must expose tokenize(text), yielding one
+    normalized, stemmed token per occurrence, including duplicates and stop
+    words. Important occurrences are included in the total frequency.
+    """
+    # Import here so extract_text remains usable before tokenizer integration.
+    from .tokenizer import tokenize
+
+    text, important_text = extract_text(html)
+    total_counts = Counter(tokenize(text))
+    important_counts = Counter(tokenize(important_text))
+
+    return {
+        token: (frequency, important_counts[token])
+        for token, frequency in total_counts.items()
+    }
