@@ -18,3 +18,12 @@ class ExtractTextTests(unittest.TestCase):
 
         self.assertEqual(text, "cat cat cat dog cat")
         self.assertEqual(important_text, "cat cat dog cat")
+
+    def test_unclosed_tags_preserve_text_and_importance(self):
+        """Missing closing tags should not crash or discard page text."""
+        html = "<p>ordinary text</p><h2>broken <strong>important text"
+
+        text, important_text = extract_text(html)
+
+        self.assertEqual(text, "ordinary text broken important text")
+        self.assertEqual(important_text, "broken important text")
