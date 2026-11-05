@@ -55,3 +55,23 @@ class ExtractTextTests(unittest.TestCase):
 
         self.assertEqual(text, "ordinary text important text")
         self.assertEqual(important_text, "important text")
+
+    def test_empty_content_returns_empty_text(self):
+        """Empty pages and whitespace-only tags contain no indexable text."""
+        for html in ("", " \n\t ", "<p></p>", "<h1> \n </h1><strong></strong>"):
+            with self.subTest(html=html):
+                text, important_text = extract_text(html)
+
+                self.assertEqual(text, "")
+                self.assertEqual(important_text, "")
+
+    def test_each_required_tag_marks_text_as_important(self):
+        """All six tags required by the assignment contribute important text."""
+        for tag in ("b", "strong", "h1", "h2", "h3", "title"):
+            with self.subTest(tag=tag):
+                html = f"<{tag}>important words</{tag}><p>ordinary words</p>"
+
+                text, important_text = extract_text(html)
+
+                self.assertEqual(text, "important words ordinary words")
+                self.assertEqual(important_text, "important words")
