@@ -27,3 +27,12 @@ class ExtractTextTests(unittest.TestCase):
 
         self.assertEqual(text, "ordinary text broken important text")
         self.assertEqual(important_text, "broken important text")
+
+    def test_plain_text_has_no_important_text(self):
+        """Pages without HTML tags still supply searchable text."""
+        plain_text = "Hello world! ab12 and 3rd are searchable."
+
+        text, important_text = extract_text(plain_text)
+
+        self.assertEqual(text, plain_text)
+        self.assertEqual(important_text, "")
