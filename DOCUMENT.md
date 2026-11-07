@@ -15,7 +15,7 @@ will come from a teammate's earlier assignment and has not been added yet.
 | Extract text and important text from HTML | Done | `src/parser.py` |
 | Count total and important token occurrences | Implemented; real tokenizer integration pending | `src/parser.py` |
 | Add tokenizer code | Left to teammate | Expected: `src/tokenizer.py` |
-| Add automated tests | 11 tests passing | `tests/test_corpus.py`, `tests/test_parser.py` |
+| Add automated tests | 12 tests passing | `tests/test_corpus.py`, `tests/test_parser.py`, `tests/test_pipeline.py` |
 | Declare HTML parser dependency | Done | `requirements.txt` |
 | Keep the local planning file out of Git | Ignore rule added; tracking removed | `.gitignore` |
 | Ignore datasets, generated indexes, and Python caches | Done | `.gitignore` |
@@ -188,6 +188,12 @@ files and directories that are automatically cleaned up.
 | `test_empty_content_returns_empty_text` | Empty strings, whitespace, empty paragraphs, and empty important tags return two empty strings. |
 | `test_each_required_tag_marks_text_as_important` | Each of `b`, `strong`, `h1`, `h2`, `h3`, and `title` contributes to important text. |
 
+### `tests/test_pipeline.py` — `PipelineTests`
+
+| Function | What it checks |
+| --- | --- |
+| `test_json_page_becomes_document_and_token_counts` | Reads a temporary JSON page from a domain folder, removes its URL fragment, extracts title and body text, filters a script, and checks final counts with a temporary tokenizer. Real tokenization and stemming remain untested. |
+
 Run from the repository root:
 
 ```bash
@@ -195,7 +201,7 @@ python3 -m pip install -r requirements.txt
 python3 -B -m unittest discover -s tests -v
 ```
 
-Current result: 11 tests pass. The project uses Python 3.9+ type annotations.
+Current result: 12 tests pass. The project uses Python 3.9+ type annotations.
 BeautifulSoup is declared as `beautifulsoup4>=4.10,<5`. No external HTML parser
 package is required because the code uses `html.parser`.
 
@@ -219,7 +225,8 @@ package is required because the code uses `html.parser`.
 1. Get the teammate's tokenizer and confirm or adapt its interface.
 2. Run real tokenizer tests for stemming, repeated words, stop words, empty text,
    and alphanumeric tokens such as `ab12` and `3rd`.
-3. Test the complete JSON → HTML extraction → token counts pipeline.
+3. Test the complete JSON → HTML extraction → token counts pipeline with the real
+   tokenizer. The existing pipeline test uses a tokenizer substitute.
 4. Try the actual dataset and check page counts, skipped-file logs, and sample
    output. Dataset extraction and a full corpus run have not been verified.
 5. Hand off the working pipeline to B and C after tokenizer integration.
