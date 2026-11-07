@@ -230,3 +230,30 @@ package is required because the code uses `html.parser`.
 4. Try the actual dataset and check page counts, skipped-file logs, and sample
    output. Dataset extraction and a full corpus run have not been verified.
 5. Hand off the working pipeline to B and C after tokenizer integration.
+
+## Latest progress — November 6, 2026
+
+The code and tests that can be completed independently of the teammate's
+tokenizer are finished for now. There is no need to keep adding small tests
+before checking the real tokenizer and dataset.
+
+The last completed items were:
+
+- Added ignore rules for the dataset, generated index, and Python caches, and
+  checked that the rules work.
+- Added `test_json_page_becomes_document_and_token_counts` in
+  `tests/test_pipeline.py`. It connects JSON loading, URL cleanup, HTML text
+  extraction, and word counting using a temporary tokenizer substitute.
+- Ran all 12 tests successfully and checked for whitespace errors with
+  `git diff --check`.
+- Documented the expected tokenizer interface so the teammate can add their code.
+
+At the latest repository check, `src/tokenizer.py` and the `data/` directory were
+still missing. The last status check made no code changes. Passing the current
+tests does not mean that real tokenization or a full dataset run has been verified.
+
+The next step is to add the teammate's tokenizer as `src/tokenizer.py`, check its
+`tokenize(text)` interface, and run integration tests with it. If the tokenizer
+is not ready yet, the dataset can be extracted into `data/` first so corpus loading
+and HTML extraction can be checked on real pages. The full Person A handoff remains
+pending until these checks are complete.
