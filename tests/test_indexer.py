@@ -1,5 +1,7 @@
-"""Checks for the in-memory inverted index."""
+"""Checks for the in-memory inverted index and its partial-file flush."""
 
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 
 from src.corpus import Document
@@ -81,3 +83,86 @@ class PostingLineTests(unittest.TestCase):
             format_line("cat", [])
         with self.assertRaises(ValueError):
             parse_line("cat\t\n")
+
+
+class PartialFlushTests(unittest.TestCase):
+    def test_full_batches_become_three_sorted_partials(self):
+        """Six documents with a batch size of two produce three partial files."""
+        with TemporaryDirectory() as directory:
+            indexer = Indexer(directory, flush_every=2)
+            pages = [
+                (0, "https://example.com/a", {"dog": (1, 0), "cat": (2, 1)}),
+                (1, "https://example.com/b", {"cat": (1, 0)}),
+                (2, "https://example.com/c", {"bird": (4, 0)}),
+                (3, "https://example.com/d", {"bird": (1, 1)}),
+                (5, "https://example.com/f", {"ant": (1, 0)}),
+                (4, "https://example.com/e", {"ant": (2, 0)}),
+            ]
+            for doc_id, url, tokens in pages:
+                indexer.add_document(Document(doc_id, url, ""), tokens)
+
+            self.assertEqual(indexer.flush_count, 3)
+            self.assertEqual(indexer.postings("cat"), [])
+            self.assertEqual(indexer.postings("ant"), [])
+            partials = indexer.partial_paths
+            self.assertEqual(
+                [path.name for path in partials],
+                ["partial-000.txt", "partial-001.txt", "partial-002.txt"],
+            )
+            self.assertEqual(
+                partials[0].read_text(encoding="utf-8"),
+                "cat\t0:2:1,1:1:0\ndog\t0:1:0\n",
+            )
+            self.assertEqual(
+                partials[2].read_text(encoding="utf-8"),
+                "ant\t4:2:0,5:1:0\n",
+            )
+            self.assertEqual(
+                (Path(directory) / "doc_ids.tsv").read_text(encoding="utf-8"),
+                "0\thttps://example.com/a\n"
+                "1\thttps://example.com/b\n"
+                "2\thttps://example.com/c\n"
+                "3\thttps://example.com/d\n"
+                "5\thttps://example.com/f\n"
+                "4\thttps://example.com/e\n",
+            )
+
+    def test_short_final_batch_is_written_by_an_explicit_flush(self):
+        """Documents past the last full batch stay in memory until flush."""
+        with TemporaryDirectory() as directory:
+            indexer = Indexer(directory, flush_every=3)
+            indexer.add_document(Document(0, "https://example.com/a", ""), {"cat": (1, 0)})
+            indexer.add_document(Document(1, "https://example.com/b", ""), {"cat": (1, 1)})
+            indexer.add_document(Document(2, "https://example.com/empty", ""), {})
+            indexer.add_document(Document(3, "https://example.com/c", ""), {"dog": (2, 1)})
+
+            self.assertEqual(indexer.flush_count, 1)
+            self.assertEqual(indexer.postings("dog"), [Posting(3, 2, 1)])
+            self.assertFalse((Path(directory) / "partials" / "partial-001.txt").exists())
+
+            indexer.flush()
+
+            self.assertEqual(indexer.flush_count, 2)
+            self.assertEqual(indexer.postings("dog"), [])
+            self.assertEqual(
+                (Path(directory) / "partials" / "partial-001.txt").read_text(encoding="utf-8"),
+                "dog\t3:2:1\n",
+            )
+            self.assertEqual(
+                (Path(directory) / "doc_ids.tsv").read_text(encoding="utf-8"),
+                "0\thttps://example.com/a\n"
+                "1\thttps://example.com/b\n"
+                "2\thttps://example.com/empty\n"
+                "3\thttps://example.com/c\n",
+            )
+
+    def test_flush_with_no_postings_creates_no_partial_file(self):
+        """An empty in-memory map must not leave a blank partial behind."""
+        with TemporaryDirectory() as directory:
+            indexer = Indexer(directory, flush_every=2)
+
+            indexer.flush()
+
+            self.assertEqual(indexer.flush_count, 0)
+            self.assertEqual(indexer.partial_paths, [])
+            self.assertFalse((Path(directory) / "partials").exists())
