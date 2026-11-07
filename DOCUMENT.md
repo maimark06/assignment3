@@ -1,8 +1,8 @@
-# Assignment 3 — Person A Progress and Design Notes
+# Assignment 3 — Progress and Design Notes
 
-This document records the work completed for Person A: reading corpus files,
-extracting HTML text, and preparing word counts for the indexer. The tokenizer
-will come from a teammate's earlier assignment and has not been added yet.
+This document records Person A's corpus and HTML work, then Person B's index
+construction. The tokenizer will come from a teammate's earlier assignment and
+has not been added yet.
 
 ## Current progress
 
@@ -20,8 +20,9 @@ will come from a teammate's earlier assignment and has not been added yet.
 | Keep the local planning file out of Git | Ignore rule added; tracking removed | `.gitignore` |
 | Ignore datasets, generated indexes, and Python caches | Done | `.gitignore` |
 
-No full build on the actual dataset has been verified yet. Index construction,
-disk merging, the CLI, and the report belong to Persons B and C.
+No full build on the actual dataset has been verified yet. Person B has
+implemented partial index construction and the merge. The CLI and the PDF
+report belong to Person C.
 
 ## Data structure: `Document`
 
@@ -257,3 +258,134 @@ The next step is to add the teammate's tokenizer as `src/tokenizer.py`, check it
 is not ready yet, the dataset can be extracted into `data/` first so corpus loading
 and HTML extraction can be checked on real pages. The full Person A handoff remains
 pending until these checks are complete.
+
+## Person B — Index construction
+
+Person B turns token counts into on-disk index files. `src/posting.py` defines
+one document's counts and the text line used by every index file.
+`src/indexer.py` collects those counts in memory and periodically writes a
+partial file. `src/merge.py` combines the partial files into the final index.
+Person C's `IndexWriter` records byte offsets while that final file is written.
+
+The indexer does not call `extract_tokens`. The caller passes
+`{term: (tf, imp)}`, so these tests do not need the missing tokenizer.
+
+| Task | Status | Location |
+| --- | --- | --- |
+| Represent one document's term counts | Done | `src/posting.py` |
+| Encode and decode one index line | Done | `src/posting.py` |
+| Collect an inverted index in memory | Done | `src/indexer.py` |
+| Flush sorted partial indexes at least three times on a large corpus | Done | `src/indexer.py` |
+| Write `doc_ids.tsv` | Done | `src/indexer.py` |
+| Merge partials into `index.txt` and `offsets.tsv` | Done | `src/merge.py` |
+| Tests for the line format, flush, and merge | Done | `tests/test_indexer.py`, `tests/test_merge.py` |
+
+### `src/posting.py`
+
+`Posting` is one term's counts in one document.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `doc_id` | `int` | Document that contained the term |
+| `tf` | `int` | Total occurrences in that document |
+| `imp` | `int` | Occurrences inside `b`, `strong`, `h1`, `h2`, `h3`, or `title` |
+
+`tf` already includes the important occurrences. `imp` is stored beside it for
+later ranking and is not added into `tf`.
+
+```python
+def format_line(term: str, postings: list[Posting]) -> str:
+def parse_line(line: str) -> tuple[str, list[Posting]]:
+```
+
+`format_line("cat", [Posting(0, 2, 1), Posting(2, 3, 0)])` returns
+`cat\t0:2:1,2:3:0\n`. `parse_line` reads that line back into the term and the
+same postings. A missing term, a missing tab, or an empty posting list raises
+`ValueError`.
+
+Decision: `format_line` keeps the posting order it is given. The flush and the
+merge sort by `doc_id` before calling it. The same line format is used for a
+partial file and for the final `index.txt`.
+
+### `src/indexer.py`
+
+`Indexer(out_dir, flush_every=15000)` keeps two structures in memory: a term
+map, `_index`, and the accepted pages, `_documents`.
+
+```python
+def add_document(self, doc: Document, tokens: dict[str, tuple[int, int]]) -> None:
+def flush(self) -> None:
+```
+
+`add_document` appends one `Posting` per token and remembers `(doc_id, url)`.
+It does not write index lines. A page with no tokens is still remembered,
+because Milestone 2 needs its URL. Every accepted page counts toward the flush
+threshold. When the count reaches `flush_every`, `add_document` calls `flush`.
+
+`flush` writes the current term map to `out_dir/partials/partial-000.txt`, then
+`partial-001.txt`, and so on. Terms are alphabetical. Postings on a line are
+ordered by `doc_id`, so a batch that received documents out of order still
+produces a sorted line. After the file write succeeds, the term map is cleared.
+The URL list is kept. Each flush rewrites `doc_ids.tsv` from that full list, in
+the order pages were added, including pages with no tokens. A row is
+`doc_id<TAB>url`.
+
+`postings(term)` returns the postings still in memory. `documents`,
+`partial_paths`, and `flush_count` are properties, so they are read without
+parentheses. `documents` and `partial_paths` return copies. There is no setter.
+
+Decisions:
+
+- The batch size counts documents rather than measuring process memory. The
+  default of 15,000 documents produces four partials for about 56,000 pages,
+  which satisfies the requirement of at least three dumps. The split protects
+  memory; one large file would fit on disk.
+- An empty term map does not create a partial file, so a blank batch is not
+  counted as one of those dumps. `flush()` on a new indexer creates nothing.
+- A short final batch stays in memory. The caller calls `flush()` once after
+  the last document.
+- `partial_paths` lists the files the merge should read. `flush_count` counts
+  only non-empty partials.
+
+### `src/merge.py`
+
+```python
+def merge_partials(partial_paths: list[Path], index_dir: PathLike) -> None:
+```
+
+This reads the partial files together with `heapq.merge`, joins every partial's
+postings for the same term, sorts those postings by `doc_id`, and writes one
+line per term through `IndexWriter`. The writer produces `index.txt` and
+`offsets.tsv`. For example, `cat` in `partial-000.txt` as documents 0 and 1,
+and in `partial-001.txt` as document 3, becomes one line:
+`cat	0:2:1,1:1:0,3:3:1`.
+
+`_iter_terms` parses one partial. `_write_grouped` holds only the current
+term's postings, then `_emit` writes that term before the next term starts.
+Partial files are closed after the merge and are not deleted.
+
+Decisions:
+
+- The merge key is the term alone. When the same term appears in several
+  partials, the earlier partial is emitted first. Sorting again by `doc_id`
+  keeps a hand-built partial valid too.
+- Only one term is held in memory, so the full index is not assembled in RAM.
+- `IndexWriter` owns `index.txt` and the byte-offset table. Person B does not
+  write a second copy of the final index. During search, Person C loads
+  `offsets.tsv` into memory and leaves `index.txt` on disk.
+- A test indexes the same four pages twice: once with `flush_every=2` and once
+  in a single batch. Both merges produce the same `index.txt`, and
+  `IndexReader.lookup("cat")` returns that term's three postings.
+
+### Person B tests
+
+| Test | What it checks |
+| --- | --- |
+| `tests/test_indexer.py` `InMemoryIndexTests` | `tf` is stored unchanged, later documents append in order, and a page with no tokens keeps its id and URL. |
+| `tests/test_indexer.py` `PostingLineTests` | A line round-trips through `parse_line`, caller order is preserved, and an empty posting list is rejected. |
+| `tests/test_indexer.py` `PartialFlushTests` | Six documents with a batch size of two produce three sorted partials, a short tail is written by an explicit flush, and an empty map creates no partial file. |
+| `tests/test_merge.py` `test_several_partials_match_one_single_pass_index` | Merging several partials matches one single-batch index, and the offset table can seek to `cat`. |
+
+Run from the repository root with the command in the Person A section. Person B's
+tests use the standard library and do not need BeautifulSoup. No full run on
+`developer.zip` has been done. The CLI and the PDF report remain Person C's work.
