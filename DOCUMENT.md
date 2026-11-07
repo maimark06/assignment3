@@ -18,6 +18,7 @@ will come from a teammate's earlier assignment and has not been added yet.
 | Add automated tests | 11 tests passing | `tests/test_corpus.py`, `tests/test_parser.py` |
 | Declare HTML parser dependency | Done | `requirements.txt` |
 | Keep the local planning file out of Git | Ignore rule added; tracking removed | `.gitignore` |
+| Ignore datasets, generated indexes, and Python caches | Done | `.gitignore` |
 
 No full build on the actual dataset has been verified yet. Index construction,
 disk merging, the CLI, and the report belong to Persons B and C.
@@ -200,11 +201,13 @@ package is required because the code uses `html.parser`.
 
 ## Git and handoff notes
 
-- `.gitignore` currently contains `/CLAUDE.md`, and that file was removed from
+- `.gitignore` contains `/CLAUDE.md`, and that file was removed from
   Git tracking while keeping the local copy. If previously committed, old copies
   may still exist in Git history.
-- Add ignore rules for `data/`, `index/`, and `__pycache__/` before adding dataset
-  files or generated output. Those rules have not been added yet.
+- `.gitignore` also excludes the root `data/` and `index/` directories,
+  `__pycache__/` directories, and compiled Python files (`*.py[cod]`). Keep
+  datasets and generated indexes in those root directories. Ignore rules do
+  not remove files that Git already tracks.
 - The indexer can consume `iter_documents`, then call `extract_tokens(doc.html)`
   after tokenizer integration. The returned tuple maps to posting fields
   `tf` (total frequency) and `imp` (important frequency).
@@ -219,4 +222,4 @@ package is required because the code uses `html.parser`.
 3. Test the complete JSON → HTML extraction → token counts pipeline.
 4. Try the actual dataset and check page counts, skipped-file logs, and sample
    output. Dataset extraction and a full corpus run have not been verified.
-5. Add the remaining Git ignore rules and hand off the working pipeline to B and C.
+5. Hand off the working pipeline to B and C after tokenizer integration.
