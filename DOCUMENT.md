@@ -4,6 +4,12 @@ This document records Person A's corpus and HTML work, then Person B's index
 construction. The tokenizer will come from a teammate's earlier assignment and
 has not been added yet.
 
+> **Update (November 6, 2026):** `src/tokenizer.py` has since been added by
+> Person C, and the full build now runs end to end on a small test corpus. The
+> Person A notes below were written before that. See
+> [Person C — Progress and Design Notes](#person-c--progress-and-design-notes)
+> at the end of this file.
+
 ## Current progress
 
 | Task | Status | Location |
@@ -389,3 +395,278 @@ Decisions:
 Run from the repository root with the command in the Person A section. Person B's
 tests use the standard library and do not need BeautifulSoup. No full run on
 `developer.zip` has been done. The CLI and the PDF report remain Person C's work.
+
+---
+
+# Person C — Progress and Design Notes
+
+This section records the work completed for Person C: the on-disk index format,
+term-offset lookup, report statistics, and the command-line entry point. It also
+covers `src/tokenizer.py`, which Person C wrote so the pipeline could run end to
+end.
+
+## Current progress
+
+| Task | Status | Location |
+| --- | --- | --- |
+| Write the final index and the term-offset table | Done | `src/index_io.py` |
+| Look up one term's postings by seeking on disk | Done | `src/index_io.py` |
+| Tests for writing and lookup | 9 tests passing | `tests/test_index_io.py` |
+| Compute the report numbers | Done (no test file, by choice) | `src/stats.py` |
+| CLI: `build` and `stats` commands | Done | `src/main.py` |
+| Tokenizer with Porter stemming | Done | `src/tokenizer.py` |
+| Declare the `nltk` dependency | Done | `requirements.txt` |
+| End-to-end run on a small synthetic corpus | Passed | (scratch data, not committed) |
+| Full run on `developer.zip` | Not started (dataset not unzipped yet) | — |
+| `README.md` run instructions | Not started | `README.md` |
+| Spot-check script | Not started | — |
+| PDF report | Not started | — |
+
+All 31 tests in the repository pass (team-wide, including Person B's indexer and
+merge tests).
+
+## On-disk index layout
+
+Every index directory (for example `index/`) contains:
+
+| File | Written by | Format |
+| --- | --- | --- |
+| `index.txt` | Merge (B) through `IndexWriter` (C) | One line per term, sorted: `term<TAB>doc_id:tf:imp,doc_id:tf:imp,...` |
+| `offsets.tsv` | `IndexWriter` (C) | `term<TAB>byte offset of that term's line in index.txt` |
+| `doc_ids.tsv` | Indexer (B) | `doc_id<TAB>url` |
+| `partials/partial-NNN.txt` | Indexer (B) | Same line format as `index.txt`, one file per flush |
+
+The line format itself is defined once, in `posting.format_line` and
+`posting.parse_line` (Person B). `index_io.py` reuses those functions.
+
+Postings are sorted by `doc_id`. `tf` already includes important occurrences,
+so `imp` is never added to `tf`.
+
+## Module: `src/index_io.py`
+
+Constants: `INDEX_FILE = "index.txt"`, `OFFSETS_FILE = "offsets.tsv"`,
+`DOC_IDS_FILE = "doc_ids.tsv"`. Other modules import these names instead of
+typing the file names again.
+
+### Class: `IndexWriter(index_dir)`
+
+Streams the final index to disk and records where each term's line starts.
+
+| Method | What it does |
+| --- | --- |
+| `write(term, postings)` | Formats one term with `format_line` and writes it. |
+| `write_line(line)` | Writes an already-formatted line (`term\t...\n`). |
+| `term_count` | Number of terms written so far. |
+| `close()` | Closes `index.txt` and writes `offsets.tsv`. |
+| `abort()` | Closes `index.txt` without writing `offsets.tsv`. |
+
+Use it as a context manager. Person B's `merge_partials` already does:
+
+```python
+with IndexWriter(out_dir) as writer:
+    for term, postings in merged_terms:  # in sorted term order
+        writer.write(term, postings)
+```
+
+Important behavior:
+
+- Offsets are **byte** positions (the file is written in binary mode), so
+  `seek()` lands on the right line even for non-ASCII terms.
+- Terms must be **strictly increasing** in Python string order. A term that is
+  out of order or repeated raises `ValueError`, because it means the merge has
+  a bug.
+- Malformed lines (no tab, no postings, missing or extra newline) raise
+  `ValueError`.
+- If an exception happens inside the `with` block, `offsets.tsv` is **not**
+  written, so a crashed build never looks complete.
+
+### Function: `load_offsets(index_dir) -> dict[str, int]`
+
+Reads `offsets.tsv` into a dictionary from term to byte offset. This table is
+the only part of the index held in memory during search. The posting lists stay
+on disk, as the developer option requires.
+
+### Class: `IndexReader(index_dir)`
+
+Loads the offset table once and keeps `index.txt` open for repeated queries
+(M2/M3).
+
+| Method | What it does |
+| --- | --- |
+| `lookup(term)` | Seeks to the term's line, parses only that line, returns `list[Posting]`. Returns `[]` for a missing term. |
+| `document_frequency(term)` | Length of the posting list (for idf in M2/M3). |
+| `term in reader` | Whether the term is in the index. |
+| `len(reader)` | Number of unique terms. |
+| `close()` | Closes the file. Also works as a context manager. |
+
+`lookup` expects a term that is already stemmed, so queries must go through
+`tokenize` first. It also checks that the line it reads belongs to the
+requested term. If `offsets.tsv` is from a different build, it raises
+`ValueError` instead of returning the wrong postings.
+
+### Function: `lookup(term, index_dir)`
+
+One-off helper for scripts and debugging. It reloads the offset table on every
+call, so search code should keep an `IndexReader` open instead.
+
+### Tests: `tests/test_index_io.py`
+
+| Function | What it checks |
+| --- | --- |
+| `test_writes_sorted_lines_and_offset_table` | One line per term; every offset points at the start of its term's line. |
+| `test_write_line_accepts_preformatted_lines` | `write_line` works and the result can be looked up. |
+| `test_rejects_out_of_order_and_duplicate_terms` | Unsorted and repeated terms raise `ValueError`. |
+| `test_rejects_malformed_lines` | Missing tab, missing newline, empty term, or two lines in one call raise `ValueError`. |
+| `test_no_offset_table_when_build_fails` | An exception inside the `with` block leaves no `offsets.tsv`. |
+| `test_lookup_first_middle_last_and_non_ascii_terms` | Every term (including `café`) returns its own postings, reading forwards and backwards. |
+| `test_missing_term_returns_empty_list` | Missing terms return `[]`; `in` works. |
+| `test_document_frequency_is_posting_list_length` | Document frequency equals posting-list length. |
+| `test_stale_offset_table_is_detected` | An offset that points at the wrong line raises `ValueError`. |
+
+## Module: `src/stats.py`
+
+Computes the Milestone 1 report numbers from a finished index directory.
+
+| Function | Returns |
+| --- | --- |
+| `count_lines(path)` | Number of non-empty lines, read one line at a time. |
+| `file_size_kb(path)` | Size of one file in KB. |
+| `count_documents(index_dir)` | Lines in `doc_ids.tsv`. |
+| `count_unique_tokens(index_dir)` | Lines in `index.txt` (one per term). |
+| `index_size_kb(index_dir)` | Size of `index.txt` + `offsets.tsv` in KB. |
+| `compute_stats(index_dir)` | An `IndexStats` dataclass with all of the numbers. |
+| `format_stats(stats)` | The report table as text (also valid Markdown). |
+
+How the numbers are measured (state this in the report):
+
+- **Index size** = `index.txt` + `offsets.tsv`. `doc_ids.tsv` is shown on its
+  own line and **not** added to the index size. Partial files are never counted.
+- **1 KB = 1024 bytes.**
+- `compute_stats` raises `FileNotFoundError` if a file is missing, and
+  `ValueError` if `offsets.tsv` and `index.txt` have a different number of terms
+  (they would come from different builds).
+
+`IndexStats` uses plain fields only (`documents`, `unique_tokens`, `index_kb`,
+`offsets_kb`, `total_index_kb`, `doc_ids_kb`); no `@property`.
+
+## Module: `src/main.py`
+
+Run from the repository root, inside the virtual environment:
+
+```bash
+source .venv/bin/activate
+python -m src.main build --data data/ --out index/ [--flush-every 15000]
+python -m src.main stats --index index/
+```
+
+`build` runs the whole pipeline:
+
+1. `iter_documents` reads each JSON page (A).
+2. `extract_tokens` turns the page into `{term: (tf, imp)}` (A + tokenizer).
+3. `Indexer.add_document` collects postings and flushes a sorted partial file
+   every `--flush-every` documents (B).
+4. `Indexer.flush()` saves the last batch and `doc_ids.tsv` (B).
+5. `merge_partials` merges the partials into `index.txt` + `offsets.tsv` (B,
+   through `IndexWriter`).
+6. Prints a summary and the stats table.
+
+The summary includes documents indexed, documents skipped, number of partial
+files, merge time, total build time, and peak memory (from `resource.getrusage`;
+converted from bytes on macOS and from KB on Linux). A page whose parsing raises
+an exception is logged, counted as skipped, and does not stop the build. A
+warning is printed if fewer than 3 partial files were written.
+
+With the default `--flush-every 15000`, about 55,000 documents should give 4
+partial files.
+
+`stats` prints the report table for an index that was already built and exits
+with a clear message if files are missing.
+
+Known issue: `check_required_modules()` is meant to stop the build with a
+friendly message if `src/tokenizer.py` or `src/merge.py` is missing. For the
+tokenizer it catches `ModuleNotFoundError`, but Python raises `ImportError`
+there, so a missing tokenizer produces a traceback instead. Both files exist
+now, so this does not affect current runs.
+
+## Module: `src/tokenizer.py`
+
+Signature, matching what `parser.extract_tokens` already calls:
+
+```python
+def tokenize(text: str) -> list[str]:
+```
+
+Rules:
+
+- Lowercase the text, then take every run of `[a-z0-9]+` as a token. All other
+  characters separate tokens, including apostrophes, hyphens, and non-ASCII
+  letters.
+- Porter-stem each token with nltk `PorterStemmer`.
+- Keep stop words and keep duplicates (one token per occurrence).
+- Empty or `None` text returns `[]`.
+- A dictionary caches each word's stem so it is computed only once.
+
+Examples:
+
+```python
+tokenize("Running dogs ran 3rd ab12 the e-mail Café MACHINE learning don't")
+# ['run', 'dog', 'ran', '3rd', 'ab12', 'the', 'e', 'mail', 'caf', 'machin', 'learn', 'don', 't']
+```
+
+Team decision needed before the full build: non-ASCII letters split words
+(`café` becomes `caf`). This follows the spec's "alphanumeric" wording
+literally. If the team wants to keep Unicode letters, change `TOKEN_RE` before
+building, since queries must use the same rule.
+
+The search component (M2/M3) must call this same `tokenize` on queries.
+
+`requirements.txt` now also contains `nltk>=3.8,<4`. Every team member must run
+`pip install -r requirements.txt` again.
+
+## End-to-end check on a synthetic corpus
+
+The real dataset is not unzipped yet, so the pipeline was checked on 11 made-up
+JSON files in 2 domain folders, built with `--flush-every 3`. The corpus
+contained broken HTML, a plain-text page, an empty page, a `<script>` block, a
+broken JSON file, and two URLs that differ only by fragment.
+
+Results:
+
+- 9 documents indexed. The broken JSON file and the duplicate-fragment URL were
+  skipped and logged by `iter_documents`.
+- 3 partial files were written and merged into `index.txt` with `offsets.tsv`.
+- Terms that appear in several partials were merged correctly (for example
+  `learn` from documents 0 and 5, `machin` from documents 0 and 8).
+- Postings were checked by hand against the pages, for example:
+  - `learn`: document 0 has `tf=2, imp=1` (once in `<title>`); document 5 has
+    `tf=3`, with the `<script>` text excluded.
+  - `acm`: `imp=1` both inside an unclosed `<strong>` and inside `<h2>`.
+  - Stop words `the`, `of`, `and` are indexed. `don't` becomes `don`, `t`.
+  - The empty page is still listed in `doc_ids.tsv`.
+- `python -m src.main stats` reported 9 documents and 27 unique tokens.
+
+## Git and handoff notes
+
+- `src/main.py`, `src/tokenizer.py`, and the `requirements.txt` change were not
+  yet committed at the time of writing.
+- `.venv/` is not shown by `git status`, so it is not at risk of being committed.
+- Person A owns `tokenizer.py` in the original plan. Tell Person A it now exists
+  so they do not write a second one, and so they can update their notes and add
+  real tokenizer tests.
+- Run `git pull --rebase` (or set `git config pull.rebase true`) to avoid the
+  "divergent branches" error when a teammate pushes while you have local
+  commits.
+
+## Remaining work for Person C
+
+1. Commit and push `main.py`, `tokenizer.py`, and `requirements.txt`.
+2. Unzip `developer.zip` into `data/` and run the full build. Record build time,
+   number of partial files, peak memory, and skipped documents.
+3. Check that the numbers are plausible: about 55,000 documents and a few hundred
+   thousand to a few million unique tokens.
+4. Write a spot-check script: for 5–10 terms, recount occurrences independently
+   and compare with `IndexReader.lookup`.
+5. Replace `README.md` with setup, build, stats, and test instructions.
+6. Write the one-page PDF report: team names, the three required numbers, and
+   the extras (partial files, build time, how size was measured, skipped
+   documents).
