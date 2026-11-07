@@ -4,7 +4,7 @@ import unittest
 
 from src.corpus import Document
 from src.indexer import Indexer
-from src.posting import Posting
+from src.posting import Posting, format_line, parse_line
 
 
 class InMemoryIndexTests(unittest.TestCase):
@@ -57,3 +57,27 @@ class InMemoryIndexTests(unittest.TestCase):
             ],
         )
         self.assertEqual(indexer.postings("cat"), [Posting(1, 1, 0)])
+
+
+class PostingLineTests(unittest.TestCase):
+    def test_format_line_round_trips_through_parse_line(self):
+        """A term line is term, tab, then doc_id:tf:imp fields."""
+        postings = [Posting(0, 2, 1), Posting(2, 3, 0)]
+
+        line = format_line("cat", postings)
+
+        self.assertEqual(line, "cat\t0:2:1,2:3:0\n")
+        self.assertEqual(parse_line(line), ("cat", postings))
+
+    def test_format_line_keeps_caller_posting_order(self):
+        """Sorting by doc_id is the caller's job, not the formatter's."""
+        line = format_line("cat", [Posting(2, 3, 0), Posting(0, 2, 1)])
+
+        self.assertEqual(line, "cat\t2:3:0,0:2:1\n")
+
+    def test_empty_posting_list_is_rejected(self):
+        """A term with no documents does not get an index line."""
+        with self.assertRaises(ValueError):
+            format_line("cat", [])
+        with self.assertRaises(ValueError):
+            parse_line("cat\t\n")
