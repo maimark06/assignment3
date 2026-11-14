@@ -5,10 +5,12 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from src.index_io import (
+    DOC_IDS_FILE,
     INDEX_FILE,
     OFFSETS_FILE,
     IndexReader,
     IndexWriter,
+    load_doc_urls,
     load_offsets,
     lookup,
 )
@@ -124,6 +126,58 @@ class IndexReaderTests(unittest.TestCase):
             with IndexReader(index_dir) as reader:
                 with self.assertRaises(ValueError):
                     reader.lookup("cat")
+
+
+class SearchSupportTests(unittest.TestCase):
+    """Milestone 2 additions: posting_size, doc_count, load_doc_urls."""
+
+    def test_posting_size_is_byte_length_of_each_line(self):
+        """First, middle, last (ends at end of file) and non-ASCII terms."""
+        with TemporaryDirectory() as tmp:
+            write_sample(Path(tmp))
+            lines = (Path(tmp) / INDEX_FILE).read_bytes().splitlines(keepends=True)
+            expected = {line.split(b"\t")[0].decode("utf-8"): len(line) for line in lines}
+            with IndexReader(tmp) as reader:
+                for term in SAMPLE:
+                    self.assertEqual(reader.posting_size(term), expected[term], term)
+                # Sizes must add up to the whole file, with no gaps or overlaps.
+                total = sum(reader.posting_size(term) for term in SAMPLE)
+                self.assertEqual(total, (Path(tmp) / INDEX_FILE).stat().st_size)
+
+    def test_posting_size_orders_longer_lists_first_and_missing_is_zero(self):
+        with TemporaryDirectory() as tmp:
+            write_sample(Path(tmp))
+            with IndexReader(tmp) as reader:
+                # "cat" has 3 postings, "zebra" has 1.
+                self.assertGreater(reader.posting_size("cat"), reader.posting_size("zebra"))
+                self.assertEqual(reader.posting_size("missing"), 0)
+
+    def test_doc_count_reads_doc_ids_and_is_zero_without_it(self):
+        with TemporaryDirectory() as tmp:
+            write_sample(Path(tmp))
+            with IndexReader(tmp) as reader:
+                self.assertEqual(reader.doc_count, 0)
+            (Path(tmp) / DOC_IDS_FILE).write_text(
+                "0\thttps://a.com\n1\thttps://b.com\n\n2\thttps://c.com\n",
+                encoding="utf-8",
+            )
+            with IndexReader(tmp) as reader:
+                self.assertEqual(reader.doc_count, 3)
+
+    def test_load_doc_urls_puts_each_url_at_its_doc_id(self):
+        with TemporaryDirectory() as tmp:
+            (Path(tmp) / DOC_IDS_FILE).write_text(
+                "0\thttps://a.com/x?q=1\n1\thttps://b.com\n", encoding="utf-8"
+            )
+            self.assertEqual(load_doc_urls(tmp), ["https://a.com/x?q=1", "https://b.com"])
+
+    def test_load_doc_urls_rejects_gaps_and_bad_lines(self):
+        """A gap would make list position differ from doc_id, so it must fail."""
+        for text in ["0\thttps://a.com\n2\thttps://c.com\n", "0 https://a.com\n"]:
+            with TemporaryDirectory() as tmp:
+                (Path(tmp) / DOC_IDS_FILE).write_text(text, encoding="utf-8")
+                with self.assertRaises(ValueError, msg=text):
+                    load_doc_urls(tmp)
 
 
 if __name__ == "__main__":

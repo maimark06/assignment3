@@ -13,6 +13,7 @@ Only the offset table is kept in memory; each lookup seeks to one line of
 index.txt and parses just that posting list.
 """
 
+from bisect import bisect_right
 from pathlib import Path
 from typing import Optional, Union
 
@@ -136,6 +137,50 @@ def load_offsets(index_dir: PathLike) -> dict[str, int]:
     return offsets
 
 
+def count_documents(index_dir: PathLike) -> int:
+    """Number of documents (non-empty lines in doc_ids.tsv); 0 if it is missing.
+
+    A missing file gives 0 instead of an error so an IndexReader can still be
+    opened on an index written without doc_ids.tsv (as some tests do).
+    Search code must treat 0 documents as "no index built".
+    """
+    path = Path(index_dir) / DOC_IDS_FILE
+    if not path.is_file():
+        return 0
+    count = 0
+    with open(path, "rb") as f:
+        for line in f:  # one line at a time, never the whole file
+            if line.strip():
+                count += 1
+    return count
+
+
+def load_doc_urls(index_dir: PathLike) -> list[str]:
+    """Load doc_ids.tsv as a list where position i holds the URL of doc_id i.
+
+    Allowed in memory during search: about 54k short strings. Raises
+    ValueError if the ids are not consecutive from 0, because then a list
+    position would no longer equal the doc_id.
+    """
+    urls: list[str] = []
+    path = Path(index_dir) / DOC_IDS_FILE
+    with open(path, encoding="utf-8") as f:
+        for line_number, line in enumerate(f, start=1):
+            line = line.rstrip("\n")
+            if not line.strip():
+                continue
+            doc_id, separator, url = line.partition("\t")
+            if not separator or not url:
+                raise ValueError(f"Bad line {line_number} in {path}: {line!r}")
+            if int(doc_id) != len(urls):
+                raise ValueError(
+                    f"{path} line {line_number}: expected doc_id {len(urls)}, "
+                    f"found {doc_id}"
+                )
+            urls.append(url)
+    return urls
+
+
 class IndexReader:
     """Look up posting lists by seeking into index.txt.
 
@@ -144,12 +189,42 @@ class IndexReader:
 
         with IndexReader("index/") as reader:
             postings = reader.lookup("comput")
+
+    Attributes:
+        offsets    term -> byte offset of its line in index.txt
+        doc_count  number of documents (N for idf), from doc_ids.tsv
     """
 
     def __init__(self, index_dir: PathLike) -> None:
         self.index_dir = Path(index_dir)
         self.offsets = load_offsets(self.index_dir)
+        self.doc_count = count_documents(self.index_dir)
+
+        # All line start positions in increasing order. A term's line ends
+        # where the next line starts, so posting_size can find that next
+        # start with a binary search. The ints are shared with self.offsets,
+        # so this list only adds one pointer per term.
+        self._sorted_offsets = sorted(self.offsets.values())
+        self._index_size = (self.index_dir / INDEX_FILE).stat().st_size
+
         self._file = open(self.index_dir / INDEX_FILE, "rb")
+
+    def posting_size(self, term: str) -> int:
+        """Byte length of term's line in index.txt, or 0 if term is absent.
+
+        A longer line means a longer posting list, so this orders query terms
+        shortest-first without reading or parsing any postings.
+        """
+        offset = self.offsets.get(term)
+        if offset is None:
+            return 0
+        # Index of the first line start that is after this one.
+        position = bisect_right(self._sorted_offsets, offset)
+        if position < len(self._sorted_offsets):
+            next_offset = self._sorted_offsets[position]
+        else:
+            next_offset = self._index_size  # last line ends at end of file
+        return next_offset - offset
 
     def lookup(self, term: str) -> list[Posting]:
         """Return the postings for an already-stemmed term, or [] if absent.
