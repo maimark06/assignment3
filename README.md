@@ -174,6 +174,8 @@ src/
   index_io.py     write index.txt + offsets.tsv; seek-based lookup
   stats.py        report numbers (documents, unique tokens, size)
   query.py        query text -> stemmed, deduplicated terms
+  retrieval.py    AND intersection of doc_id-sorted posting lists
+  ranking.py      tf-idf + important-tag boost, top k
   searcher.py     query -> postings from disk -> AND -> rank -> URLs
   search_cli.py   console search prompt
   main.py         command line: build, stats, search
