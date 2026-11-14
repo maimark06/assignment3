@@ -1,9 +1,10 @@
-"""Command-line entry point for building the index and printing its stats.
+"""Command-line entry point for building, inspecting, and searching the index.
 
 Run from the repository root:
 
     python3 -m src.main build --data data/ --out index/
     python3 -m src.main stats --index index/
+    python3 -m src.main search --index index/ --top 5
 
 build pipeline:
     corpus.iter_documents  -> one Document per JSON page        (Person A)
@@ -132,7 +133,7 @@ def run_stats(index_dir):
 
 def main(argv=None):
     """Parse command-line arguments and run the chosen command."""
-    parser = argparse.ArgumentParser(description="CS121 Assignment 3 indexer")
+    parser = argparse.ArgumentParser(description="CS121 Assignment 3 search engine")
     commands = parser.add_subparsers(dest="command", required=True)
 
     build = commands.add_parser("build", help="build the index from the corpus")
@@ -148,14 +149,27 @@ def main(argv=None):
     stats.add_argument("--index", required=True,
                        help="folder containing a built index, e.g. index/")
 
+    search = commands.add_parser("search", help="search the index interactively")
+    search.add_argument("--index", required=True,
+                        help="folder containing a built index, e.g. index/")
+    search.add_argument("--top", type=int, default=5,
+                        help="maximum results per query (default 5; must be positive)")
+
     args = parser.parse_args(argv)
+    if args.command == "search" and args.top < 1:
+        search.error("--top must be at least 1")
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
     if args.command == "build":
         run_build(args.data, args.out, args.flush_every)
-    else:
+    elif args.command == "stats":
         run_stats(args.index)
+    else:
+        # Delay search imports so build/stats do not depend on the Searcher.
+        from .search_cli import run_search
+
+        run_search(args.index, k=args.top)
 
 
 if __name__ == "__main__":

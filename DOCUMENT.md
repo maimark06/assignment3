@@ -103,7 +103,7 @@ being reported as successful searches; the context manager still handles cleanup
 The import is inside the function so importing the console module does not
 require the unfinished Searcher. The real `src/searcher.py` is not present yet,
 so calling this function without it will fail at import time. The `search`
-subcommand is also not wired up yet; this step completes the console loop only.
+subcommand is now wired up by the `main` function described below.
 
 ### Console tests
 
@@ -119,9 +119,56 @@ These tests use a temporary Searcher substitute and captured console output.
 They verify console behavior, not real retrieval or ranking. All 35 tests passed
 in the isolated temporary environment used for the previous query-processing step.
 
+### Updated function: `main(argv=None)` — search subcommand
+
+Location: `src/main.py`. This step extends the existing `main` function rather
+than adding a second entry point. The module description and help now cover
+search as well as index construction and statistics.
+
+Start the console with:
+
+```bash
+python3 -m src.main search --index index/ --top 5
+```
+
+Arguments and behavior:
+
+- `search` selects the interactive console.
+- `--index` is required and supplies the index directory to `run_search`.
+- `--top` is an integer, defaults to 5, and must be at least 1. Missing required
+  arguments, non-integer limits, and nonpositive limits exit with argparse's
+  error message and status 2 before the console starts.
+- `search --help` lists the search options and exits successfully.
+- The search branch imports `run_search` only when selected, then calls
+  `run_search(args.index, k=args.top)`. Query handling and resource cleanup remain
+  in the console function. The backend's `Searcher` import still happens there.
+- The existing `build` and `stats` commands keep their original arguments and
+  dispatch to `run_build` and `run_stats` respectively.
+
+The command is registered, but a real interactive search still requires Person
+C's `src/searcher.py`, Person B's retrieval/ranking code, and a built index.
+Command help works without these search modules. No real URLs or performance
+measurements have been produced by this step.
+
+### Command tests
+
+Location: `tests/test_main.py`, class `MainTests`.
+
+| Function | What it checks |
+| --- | --- |
+| `test_search_command_forwards_index_and_result_limit` | Dispatches the index path and default/custom result limit to the console. |
+| `test_invalid_search_arguments_do_not_start_console` | Missing index, zero/negative limits, and non-integer limits fail with status 2 without starting search. |
+| `test_search_help_lists_options` | Help shows both search options and exits with status 0. |
+| `test_existing_build_and_stats_commands_still_route_correctly` | Existing commands continue to call their original handlers. |
+
+These tests mock command handlers, so no real index is opened. All 39 tests pass
+in the isolated temporary environment. The actual command
+`python3 -B -m src.main search --help` also runs successfully, and
+`git diff --check` reports no whitespace errors.
+
 ### Remaining M2 work for Person A
 
-1. Add the `search` subcommand to `src/main.py`, coordinating with Person C.
+1. Share the `main.py` search-command change with Person C, who owns the entry point.
 2. Test and integrate the interface with Person C's `Searcher` and Person B's
    retrieval and ranking functions. Real query results and report screenshots
    remain pending.
