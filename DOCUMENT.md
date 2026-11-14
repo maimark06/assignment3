@@ -173,6 +173,157 @@ in the isolated temporary environment. The actual command
    retrieval and ranking functions. Real query results and report screenshots
    remain pending.
 
+## Milestone 2 — Person B: Retrieval and Ranking
+
+Updated November 13, 2026. Person B owns the two steps between reading posting
+lists from disk and showing URLs: `intersect` keeps the documents that contain
+every query term, and `rank` scores those documents and returns the best `k`.
+`Searcher` (Person C) calls both, so neither function touches the index files.
+
+| Task | Status | Location |
+| --- | --- | --- |
+| Boolean AND over sorted posting lists | Done | `src/retrieval.py` |
+| tf-idf ranking with the important-tag boost | Done | `src/ranking.py` |
+| Tests for both | 16 tests passing | `tests/test_retrieval.py`, `tests/test_ranking.py` |
+| Run the four required queries on the full index | Done (see below) | — |
+
+### Completed function: `intersect(posting_lists)`
+
+Location: `src/retrieval.py`.
+
+```python
+def intersect(posting_lists: list[list[Posting]]) -> dict[int, list[Posting]]:
+```
+
+Returns `doc_id -> [one Posting per input list]` for documents present in every
+list. The postings in each value follow the order of `posting_lists`.
+
+How it works:
+
+1. Return `{}` if there are no lists or any list is empty.
+2. Start the running result from the first list, as `(doc_id, [posting])` pairs.
+3. Merge the running result with the next list using two pointers
+   (`_intersect_two`). Equal doc_ids are a match and both pointers move. The
+   pointer on the smaller doc_id moves alone, because that document cannot
+   appear later in the other list.
+4. Stop and return `{}` as soon as the running result is empty.
+
+Choices and why:
+
+| Choice | Why |
+| --- | --- |
+| Two-pointer merge instead of sets or hashing | The index already stores postings sorted by doc_id, so one forward pass over each list is enough, in O(m + n) time with no extra lookup structure. It is the standard textbook method and the basis for skip pointers in M3. The spec only requires AND behavior, so other methods would also be allowed. |
+| Merge two lists at a time instead of all at once | Any number of query terms works by repeating the same small step. The running result can only shrink, so later merges compare fewer candidates. |
+| Shortest list first (ordered by `Searcher`) | The first running result is as small as possible. For `master of software engineering`, the 2,676 `master` postings are merged first, and only 1,028 candidates are left by the time the 36,042-entry `of` list is reached. |
+| Early exit on an empty result | A query with no AND matches skips the remaining lists. |
+| Keep the `Posting` objects, not just doc_ids | Ranking needs `tf` and `imp` for each term. Keeping the input order lets `rank` pair `matches[doc_id][i]` with `dfs[i]`. |
+
+`Searcher` builds `dfs` after sorting the terms, so the two orders match. If
+that order ever changes, idf values attach to the wrong terms without any error.
+
+### Completed function: `rank(matches, dfs, n_docs, k)`
+
+Location: `src/ranking.py`.
+
+```python
+IMP_WEIGHT = 1
+
+def rank(matches: dict[int, list[Posting]], dfs: list[int],
+         n_docs: int, k: int) -> list[tuple[int, float]]:
+```
+
+Returns the top `k` `(doc_id, score)` pairs, highest score first. For each query
+term `t` in document `d`:
+
+```
+eff_tf   = tf + IMP_WEIGHT * imp
+w(t, d)  = (1 + log10(eff_tf)) * log10(N / df_t)
+score(d) = sum of w(t, d) over the query terms
+```
+
+`N` is the number of documents in `doc_ids.tsv` (53,792), and `df_t` is the
+length of the term's posting list.
+
+Choices and why:
+
+| Choice | Why |
+| --- | --- |
+| `1 + log10(tf)` instead of raw `tf` | More occurrences suggest a page is more about the term, but with diminishing returns: tf 1, 10, and 100 give 1, 2, and 3. A page cannot win only by repeating a word. The `1 +` keeps a single occurrence from scoring 0. |
+| `log10(N / df)` as the term weight | Rare terms are stronger evidence than common ones. `of` (df 36,042) gets about 0.17, while `cristina` (df 75) gets about 2.86. This is why the fourth query works without stop-word removal: `of` barely affects the ranking. |
+| Multiply the two parts | A frequent but common term still contributes little, and a rare term that appears once still counts. |
+| Add `IMP_WEIGHT * imp` to `tf` | Authors put a page's topic in titles, headings, and bold text. `tf` already includes those hits, so a weight of 1 counts each one twice. It is a named constant so it can be tuned in M3. |
+| Sum over terms without cosine normalization | Normalization needs each document's vector length, which the M1 index does not store. It is deferred to M3 instead of reading every posting at query time. |
+| `heapq.nlargest(k, ...)` instead of a full sort | It keeps only the best `k` while scanning, in O(n log k) time. With 4,199 matches and `k = 5`, a full sort would order thousands of results that are never shown. |
+| Ties go to the smaller doc_id | Results are deterministic, so tests and the report do not change between runs. |
+
+### Tests
+
+| File | What it checks |
+| --- | --- |
+| `tests/test_retrieval.py` (8 tests) | Disjoint lists, a single list, identical lists, partial overlap, three lists with one common document, empty lists, no lists, and posting order following the input lists. |
+| `tests/test_ranking.py` (8 tests) | A hand-computed score, the important hit beating the same `tf` without one, a rarer term scoring higher, ties going to the smaller doc_id, top-`k` selection, `k` larger than the match set, no matches, and `IMP_WEIGHT` starting at 1. |
+
+`intersect` was also compared with Python's set intersection on 2,000 random
+cases of 1 to 4 lists. Every case returned the same documents, with one posting
+per list. All 75 repository tests pass in the project virtual environment
+(`.venv/bin/python -m unittest discover tests`). The system `python3` is missing
+`bs4` and `nltk`, so five test modules fail to import there.
+
+### Results on the full index
+
+Times are the best of five warm runs on one MacBook, and do not include
+`Searcher` startup.
+
+| Query | Terms (df), shortest first | AND matches | Read + parse | `intersect` | `rank` |
+| --- | --- | --- | --- | --- | --- |
+| `cristina lopes` | `cristina` (75), `lope` (236) | 66 | 0.1 ms | <0.1 ms | <0.1 ms |
+| `machine learning` | `machin` (5,957), `learn` (9,340) | 4,199 | 2.5 ms | 1.9 ms | 1.2 ms |
+| `ACM` | `acm` (3,345) | 3,345 | 0.5 ms | 0.3 ms | 0.6 ms |
+| `master of software engineering` | `master` (2,676), `engin` (7,309), `softwar` (10,573), `of` (36,042) | 1,028 | 12.4 ms | 3.7 ms | 0.4 ms |
+
+Even the worst query takes about 17 ms in total, well under the M3 target of
+300 ms. Reading and parsing the long `of` line costs more than intersecting and
+ranking combined.
+
+Top results are on topic. Cristina Lopes's faculty profile and her Mondego lab
+page are in the top 5. The MSWE program pages are at ranks 4 and 5 for
+`master of software engineering`, and the ICS machine learning category pages
+are at ranks 2 and 3. The weaknesses below explain the results above them.
+
+### Limitations
+
+1. **Long pages are favored.** Without length normalization, long list-style
+   pages build up high term counts. `machine learning` ranks
+   `maven-contents.txt` first. `ACM` returns five publication lists, and
+   `master of software engineering` ranks two homework `DVD.txt` files above
+   the MSWE program pages. Cosine normalization in M3 is the main fix.
+2. **A one-word query is ranked by term count alone.** Every match shares the
+   same idf, so `ACM` is ordered only by how often a page repeats `acm` and how
+   often it is in an important tag.
+3. **Word order and distance are ignored.** A page with `master` at the top and
+   `software engineering` far below scores the same as a page with the exact
+   phrase. Fixing this needs word positions or 2-grams, both M3 extra credit.
+4. **Near-duplicates fill result slots.** `DVD.txt` and `DVD-random.txt` have
+   the same score at ranks 1 and 2. Duplicate detection is M3 extra credit.
+5. **All important tags count the same.** A word in `<title>` gets the same
+   boost as a word in `<b>`, and `IMP_WEIGHT = 1` has not been tuned.
+6. **idf does not change which pages match.** Under AND, every match contains
+   every term, so idf only decides which term's frequency matters more.
+7. **Each match copies its posting list.** `left[i][1] + [right[j]]` builds a
+   new list for every match at every step, and `_score` recomputes
+   `log10(N / df)` for each document instead of once per term. Neither is
+   noticeable at these sizes, but both are easy to change if timing demands it.
+8. **The full posting list is parsed before intersecting.** `intersect` can only
+   skip ahead in memory. A binary posting format or skip pointers would avoid
+   reading all 36,042 `of` postings when only 1,028 candidates remain.
+
+### Remaining work for Person B
+
+1. Review the top-5 results with Person C for the report, using the
+   limitations above to explain unexpected rankings.
+2. For M3, add cosine length normalization (with document lengths written at
+   build time), then retune `IMP_WEIGHT` using the 20-query evaluation set.
+
 This document records Person A's corpus and HTML work, then Person B's index
 construction. The tokenizer will come from a teammate's earlier assignment and
 has not been added yet.
