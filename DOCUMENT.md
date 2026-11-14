@@ -1,5 +1,79 @@
 # Assignment 3 — Progress and Design Notes
 
+## Milestone 2 — Person A: Query Processing and Console Interface
+
+Updated November 13, 2026. This section describes the current M2 work. The M1
+sections below remain as historical notes; the teammate's tokenizer and CLI
+have now been merged into the local branch.
+
+### Completed function: `parse_query(text)`
+
+Location: `src/query.py`.
+
+```python
+def parse_query(text: str) -> list[str]:
+```
+
+This function prepares a user's query for AND retrieval. It returns normalized,
+stemmed terms with duplicates removed, keeping their first-occurrence order.
+
+How it works:
+
+1. Call `src.tokenizer.tokenize(text)`, the same function used when indexing.
+   This lowercases text, extracts alphanumeric runs, and applies cached Porter
+   stemming. No separate query tokenizer or stemmer is introduced.
+2. Use `dict.fromkeys` to keep one copy of each normalized term in insertion order.
+3. Convert those dictionary keys to a list for the search component.
+
+Deduplication happens after stemming: `running` and `runs` both become `run`,
+so the query searches that term once. Repeated terms do not change AND matches.
+Stop words such as `of` are kept, including in the fourth required query.
+The input is expected to be a string; empty, whitespace-only, and punctuation-only
+strings return `[]`. This function does not read the index, intersect postings,
+rank results, or handle console commands such as `quit`.
+
+Examples checked with the real tokenizer:
+
+| Input | Returned terms |
+| --- | --- |
+| `cristina lopes` | `["cristina", "lope"]` |
+| `machine learning` | `["machin", "learn"]` |
+| `ACM` | `["acm"]` |
+| `master of software engineering` | `["master", "of", "softwar", "engin"]` |
+| `Running dog runs DOG` | `["run", "dog"]` |
+| `ab12 3rd AB12` | `["ab12", "3rd"]` |
+| `!!!` | `[]` |
+
+Person C can import it with `from src.query import parse_query` when implementing
+`Searcher`. This function uses only the tokenizer and does not require a built index.
+
+### Query test
+
+Location: `tests/test_query.py`, class `ParseQueryTests`, function
+`test_query_normalization_and_deduplication`.
+
+The test uses 11 subtests covering all four required queries, empty input,
+whitespace, punctuation, case-insensitive repeats, words sharing a stem,
+alphanumeric tokens, and stop words. Each case checks a fixed expected result
+and agreement with the real indexing tokenizer after ordered deduplication.
+No tokenizer substitute is used for this test.
+
+Validation: all 32 tests passed after this change. The default Python environment
+was missing `nltk`; adding it also exposed an existing system NumPy/SciPy binary
+conflict. Tests were therefore run in an isolated temporary virtual environment
+with the declared project dependencies. No project dependency rules were changed.
+For normal development, install `requirements.txt` in a clean virtual environment
+and run `python -B -m unittest discover -s tests -v` from the repository root.
+
+### Remaining M2 work for Person A
+
+1. Implement the console search loop in `src/search_cli.py`: input handling,
+   exit commands, ranked URLs and scores, match count, and search-call timing.
+2. Add the `search` subcommand to `src/main.py`, coordinating with Person C.
+3. Test and integrate the interface with Person C's `Searcher` and Person B's
+   retrieval and ranking functions. Real query results and report screenshots
+   remain pending.
+
 This document records Person A's corpus and HTML work, then Person B's index
 construction. The tokenizer will come from a teammate's earlier assignment and
 has not been added yet.
