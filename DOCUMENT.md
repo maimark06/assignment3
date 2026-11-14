@@ -65,12 +65,64 @@ with the declared project dependencies. No project dependency rules were changed
 For normal development, install `requirements.txt` in a clean virtual environment
 and run `python -B -m unittest discover -s tests -v` from the repository root.
 
+### Completed function: `run_search(index_dir, k=5)`
+
+Location: `src/search_cli.py`.
+
+```python
+def run_search(index_dir: str, k: int = 5) -> None:
+```
+
+Runs the interactive console interface. `index_dir` identifies the built index;
+`k` is the maximum number of results requested per query and must be positive.
+The function returns `None` when the user leaves.
+
+Processing steps:
+
+1. Reject a nonpositive result limit with `ValueError`.
+2. Import Person C's `Searcher` and open it once with a context manager, so the
+   same index reader and URL mapping can be reused across queries.
+3. Prompt with `Search>`, strip surrounding whitespace, and ignore blank input.
+4. Exit for case-insensitive `quit` or `exit`, EOF (Ctrl-D on Unix), or Ctrl-C
+   while waiting for input. The context manager closes the Searcher on exit.
+5. Pass the query string to `searcher.search(query, k=k)`. The Searcher handles
+   query parsing, disk lookups, AND matching, and ranking; the console does not
+   repeat those steps. Punctuation-only input is passed through for the Searcher
+   to handle as a query with no terms.
+6. Measure only the search call with `perf_counter` and convert seconds to
+   milliseconds. Startup, input waiting, and result printing are excluded.
+7. Print the total AND match count, elapsed time, and each result's rank, URL,
+   and score. Empty results produce `No results found.` The match count may be
+   greater than the number of displayed results. Result order comes from Searcher.
+
+The expected backend interface is `Searcher(index_dir)` as a context manager,
+with `search(query, k)` returning `(results, total_matches)`. Each result must
+provide `.url` and `.score`. Unexpected backend exceptions propagate rather than
+being reported as successful searches; the context manager still handles cleanup.
+
+The import is inside the function so importing the console module does not
+require the unfinished Searcher. The real `src/searcher.py` is not present yet,
+so calling this function without it will fail at import time. The `search`
+subcommand is also not wired up yet; this step completes the console loop only.
+
+### Console tests
+
+Location: `tests/test_search_cli.py`, class `SearchCliTests`.
+
+| Function | What it checks |
+| --- | --- |
+| `test_search_output_empty_input_and_exit` | Ignores blank input, trims queries, forwards the requested limit, displays ranked URLs and scores, handles zero matches, and measures search time using a controlled clock. |
+| `test_quit_eof_and_interrupt_close_searcher` | `quit`, EOF, and Ctrl-C during input exit without searching and close the Searcher context. |
+| `test_nonpositive_result_limit_is_rejected` | Limits of 0 and -1 raise `ValueError` before opening an index. |
+
+These tests use a temporary Searcher substitute and captured console output.
+They verify console behavior, not real retrieval or ranking. All 35 tests passed
+in the isolated temporary environment used for the previous query-processing step.
+
 ### Remaining M2 work for Person A
 
-1. Implement the console search loop in `src/search_cli.py`: input handling,
-   exit commands, ranked URLs and scores, match count, and search-call timing.
-2. Add the `search` subcommand to `src/main.py`, coordinating with Person C.
-3. Test and integrate the interface with Person C's `Searcher` and Person B's
+1. Add the `search` subcommand to `src/main.py`, coordinating with Person C.
+2. Test and integrate the interface with Person C's `Searcher` and Person B's
    retrieval and ranking functions. Real query results and report screenshots
    remain pending.
 
