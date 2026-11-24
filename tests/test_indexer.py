@@ -85,6 +85,51 @@ class PostingLineTests(unittest.TestCase):
             parse_line("cat\t\n")
 
 
+class DocumentLengthTests(unittest.TestCase):
+    def test_flush_writes_raw_token_counts_beside_doc_ids(self):
+        """doc_lengths.tsv is doc_id, tab, total stemmed occurrences.
+
+        Important-tag hits are already inside tf, so they are not added again.
+        A page with no tokens is stored as 0.
+        """
+        with TemporaryDirectory() as directory:
+            indexer = Indexer(directory, flush_every=10)
+            indexer.add_document(
+                Document(0, "https://example.com/a", ""),
+                {"cat": (2, 1), "dog": (1, 1)},
+            )
+            indexer.add_document(
+                Document(1, "https://example.com/empty", ""),
+                {},
+            )
+            indexer.flush()
+
+            lengths = Path(directory) / "doc_lengths.tsv"
+            self.assertTrue(lengths.is_file())
+            self.assertEqual(
+                lengths.read_text(encoding="utf-8"),
+                "0\t3\n1\t0\n",
+            )
+
+    def test_later_flush_rewrites_lengths_for_every_accepted_document(self):
+        """Lengths accumulate like doc_ids.tsv: one line per document so far."""
+        with TemporaryDirectory() as directory:
+            indexer = Indexer(directory, flush_every=1)
+            indexer.add_document(
+                Document(0, "https://example.com/a", ""),
+                {"cat": (4, 0)},
+            )
+            indexer.add_document(
+                Document(2, "https://example.com/b", ""),
+                {"dog": (1, 2), "bird": (2, 0)},
+            )
+
+            self.assertEqual(
+                (Path(directory) / "doc_lengths.tsv").read_text(encoding="utf-8"),
+                "0\t4\n2\t3\n",
+            )
+
+
 class PartialFlushTests(unittest.TestCase):
     def test_full_batches_become_three_sorted_partials(self):
         """Six documents with a batch size of two produce three partial files."""
@@ -166,3 +211,58 @@ class PartialFlushTests(unittest.TestCase):
             self.assertEqual(indexer.flush_count, 0)
             self.assertEqual(indexer.partial_paths, [])
             self.assertFalse((Path(directory) / "partials").exists())
+
+    def test_posting_budget_flushes_before_the_document_threshold(self):
+        """Memory is bounded by how many Posting objects are in the batch."""
+        with TemporaryDirectory() as directory:
+            indexer = Indexer(directory, flush_every=100, flush_postings=3)
+            indexer.add_document(
+                Document(0, "https://example.com/a", ""),
+                {"cat": (1, 0), "dog": (1, 0)},
+            )
+            self.assertEqual(indexer.flush_count, 0)
+
+            indexer.add_document(
+                Document(1, "https://example.com/b", ""),
+                {"bird": (2, 1), "ant": (1, 0)},
+            )
+
+            self.assertEqual(indexer.flush_count, 1)
+            self.assertEqual(indexer.postings("bird"), [])
+            self.assertEqual(
+                (Path(directory) / "partials" / "partial-000.txt").read_text(
+                    encoding="utf-8"
+                ),
+                "ant\t1:1:0\nbird\t1:2:1\ncat\t0:1:0\ndog\t0:1:0\n",
+            )
+
+    def test_one_document_over_the_posting_budget_is_stored_then_flushed(self):
+        """A single wide page is not dropped just because it exceeds the budget."""
+        with TemporaryDirectory() as directory:
+            indexer = Indexer(directory, flush_every=100, flush_postings=2)
+            indexer.add_document(
+                Document(0, "https://example.com/wide", ""),
+                {"ant": (1, 0), "bird": (1, 0), "cat": (1, 0)},
+            )
+
+            self.assertEqual(indexer.flush_count, 1)
+            self.assertEqual(indexer.postings("cat"), [])
+            self.assertEqual(
+                (Path(directory) / "partials" / "partial-000.txt").read_text(
+                    encoding="utf-8"
+                ),
+                "ant\t0:1:0\nbird\t0:1:0\ncat\t0:1:0\n",
+            )
+
+    def test_empty_page_does_not_spend_the_posting_budget(self):
+        """A page with no tokens adds a length of 0 and no Posting objects."""
+        with TemporaryDirectory() as directory:
+            indexer = Indexer(directory, flush_every=100, flush_postings=1)
+            indexer.add_document(Document(0, "https://example.com/empty", ""), {})
+
+            self.assertEqual(indexer.flush_count, 0)
+            self.assertEqual(indexer.postings("cat"), [])
+
+    def test_posting_budget_must_be_at_least_one(self):
+        with self.assertRaises(ValueError):
+            Indexer("unused-output", flush_postings=0)
