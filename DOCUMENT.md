@@ -223,7 +223,10 @@ that order ever changes, idf values attach to the wrong terms without any error.
 
 ### Completed function: `rank(matches, dfs, n_docs, k)`
 
-Location: `src/ranking.py`.
+Location: `src/ranking.py`. Milestone 3 replaced the term-frequency part.
+The signature, formula, and reasons are in
+[Milestone 3 — Person B: Lengths and damped ranking](#milestone-3--person-b-lengths-and-damped-ranking).
+The notes below describe the milestone 2 score that those results were measured with.
 
 ```python
 IMP_WEIGHT = 1
@@ -292,11 +295,13 @@ are at ranks 2 and 3. The weaknesses below explain the results above them.
 
 ### Limitations
 
-1. **Long pages are favored.** Without length normalization, long list-style
-   pages build up high term counts. `machine learning` ranks
-   `maven-contents.txt` first. `ACM` returns five publication lists, and
-   `master of software engineering` ranks two homework `DVD.txt` files above
-   the MSWE program pages. Cosine normalization in M3 is the main fix.
+1. **Long pages are favored.** These results were ranked without length
+   damping, so long list-style pages build up high term counts.
+   `machine learning` ranks `maven-contents.txt` first. `ACM` returns five
+   publication lists, and `master of software engineering` ranks two homework
+   `DVD.txt` files above the MSWE program pages. Milestone 3 addresses this
+   by comparing each page's length with the average length. The measured
+   top results above are still the milestone 2 ranking.
 2. **A one-word query is ranked by term count alone.** Every match shares the
    same idf, so `ACM` is ordered only by how often a page repeats `acm` and how
    often it is in an important tag.
@@ -321,8 +326,87 @@ are at ranks 2 and 3. The weaknesses below explain the results above them.
 
 1. Review the top-5 results with Person C for the report, using the
    limitations above to explain unexpected rankings.
-2. For M3, add cosine length normalization (with document lengths written at
-   build time), then retune `IMP_WEIGHT` using the 20-query evaluation set.
+2. For M3, add length damping (with document lengths written at build time),
+   then retune `IMP_WEIGHT` using the 20-query evaluation set. The damping
+   and the length file are in the next section. `IMP_WEIGHT` is still 1.
+   `Searcher` does not load `doc_lengths.tsv` yet, so a live query still
+   treats every page length as 1.
+
+## Milestone 3 — Person B: Lengths and damped ranking
+
+Updated November 24, 2026. Person B still owns `rank` and the indexer.
+`rank` does not open index files. The build writes one length per document,
+and Person C's `Searcher` is expected to pass those lengths in.
+
+| Task | Status | Location |
+| --- | --- | --- |
+| Write `doc_lengths.tsv` at build time | Done | `src/indexer.py` |
+| Damped tf using each page's length and the average length | Done | `src/ranking.py` |
+| Flush a batch by posting count as well as by document count | Done | `src/indexer.py` |
+| Tests for lengths, damping, and the posting flush | Done | `tests/test_indexer.py`, `tests/test_ranking.py` |
+| Load lengths inside `Searcher` | Not done (Person C) | `src/searcher.py` |
+
+### Score
+
+```python
+IMP_WEIGHT = 1
+K1 = 1.2
+B = 0.75
+
+def rank(matches, dfs, n_docs, k, lengths, avg_length) -> list[tuple[int, float]]:
+```
+
+`lengths[doc_id]` is that page's token count. `avg_length` is the average
+count the page is compared with. For query term `t` in document `d`:
+
+```
+eff_tf   = tf + IMP_WEIGHT * imp
+norm     = 1 - B + B * (length_d / avg_length)
+tf_part  = eff_tf * (K1 + 1) / (eff_tf + K1 * norm)
+w(t, d)  = tf_part * log10(N / df_t)
+score(d) = sum of w(t, d) over the query terms
+```
+
+With `B = 0.75` the norm is `0.25 + 0.75 * (length / avg_length)`. A page of
+average length has `norm = 1`. The idf term `log10(N / df_t)` is the same one
+used in milestone 2. Top `k` and the smaller-`doc_id` tie break are unchanged.
+
+Choices and why:
+
+| Choice | Why |
+| --- | --- |
+| Compare each page with `avg_length` | The new information is how long this page is relative to a typical page. A ratio of 1 leaves a typical page unchanged. A longer page gets a larger `norm` and the same `eff_tf` counts for less. A shorter page gets a smaller `norm` and the same `eff_tf` counts for more. |
+| Store the length at build time in `doc_lengths.tsv` | Ranking needs one integer per document. Reading every posting at query time to recompute a vector length would load far more of the index than search is allowed to hold. |
+| Length is the sum of `tf`, and `imp` is left out | `tf` is the number of stemmed tokens on the page. `imp` is a ranking boost, not extra tokens. Leaving it out of the stored length means `IMP_WEIGHT` can be tuned later without rebuilding `doc_lengths.tsv`. An empty page is stored as 0. |
+| Replace `1 + log10(eff_tf)` with the damped `tf_part` | Milestone 2 already had diminishing returns, but a long list page could still win by repeating a term. `tf_part` grows with `eff_tf` and levels off toward `K1 + 1` (2.2). A dump with a huge count cannot pull arbitrarily far ahead of a normal page. |
+| `K1 = 1.2` and `B = 0.75` | These are the usual BM25 settings, kept as named constants so they can be tuned after the 20-query check. `B` below 1 is required so a one-token page does not automatically beat a normal page that uses the term more. Dividing the whole score by length does that, which is why the ratio sits inside the denominator with `K1` instead. |
+| Keep `log10(N / df)` and `IMP_WEIGHT` | Rare terms and important-tag hits were already doing the right job in milestone 2. Length should scale the term-frequency part only. When two pages have the same length, an important hit still beats the same `tf` with `imp = 0`, and a rarer term still adds more. |
+| `rank` takes `lengths` and `avg_length` as arguments | `rank` stays free of file I/O, as in milestone 2. `Searcher` owns how the average is computed and can stay consistent with the file it loads. |
+
+`src/searcher.py` calls this signature, but it passes length 1 for every page
+and `avg_length = 1` until Person C loads `doc_lengths.tsv`. Until that
+wiring lands, a live query does not change order because of page length.
+
+### Indexer
+
+`Indexer(out_dir, flush_every=15000, flush_postings=500_000)` now keeps a
+token count beside each accepted page. On every flush it rewrites
+`doc_lengths.tsv` from the full list, in the same order as `doc_ids.tsv`.
+A row is `doc_id<TAB>token_count`.
+
+A batch is written when either limit is reached: `flush_every` documents, or
+`flush_postings` postings currently in memory. The posting count is the
+number of `Posting` objects, one per term on the page, not the sum of `tf`.
+A page with no tokens adds a length of 0 and does not spend the posting
+budget. A single page that crosses the budget is stored, then flushed.
+
+Choices and why:
+
+| Choice | Why |
+| --- | --- |
+| Flush on posting count in addition to document count | A batch of 15,000 documents can still hold millions of `Posting` objects when pages are wide. The default budget of 500,000 keeps one partial well under that. `flush_every` stays, so the existing partial-file behavior and the "at least three dumps" rule still apply. |
+| Count `Posting` objects, not tokens | The memory cost is one Python object per term on the page. Repeating a term raises `tf` on the same posting; it does not add another object. |
+| Rewrite the whole length file on each flush | `doc_ids.tsv` already works this way. The length file has to stay aligned with it, including pages from earlier batches and pages with no tokens. |
 
 This document records Person A's corpus and HTML work, then Person B's index
 construction. The tokenizer will come from a teammate's earlier assignment and
@@ -607,6 +691,8 @@ The indexer does not call `extract_tokens`. The caller passes
 | Collect an inverted index in memory | Done | `src/indexer.py` |
 | Flush sorted partial indexes at least three times on a large corpus | Done | `src/indexer.py` |
 | Write `doc_ids.tsv` | Done | `src/indexer.py` |
+| Write `doc_lengths.tsv` | Done | `src/indexer.py` |
+| Flush when the in-memory posting count reaches a budget | Done | `src/indexer.py` |
 | Merge partials into `index.txt` and `offsets.tsv` | Done | `src/merge.py` |
 | Tests for the line format, flush, and merge | Done | `tests/test_indexer.py`, `tests/test_merge.py` |
 
@@ -639,26 +725,32 @@ partial file and for the final `index.txt`.
 
 ### `src/indexer.py`
 
-`Indexer(out_dir, flush_every=15000)` keeps two structures in memory: a term
-map, `_index`, and the accepted pages, `_documents`.
+`Indexer(out_dir, flush_every=15000, flush_postings=500_000)` keeps three
+structures in memory: a term map, `_index`, the accepted pages, `_documents`,
+and a token count for each accepted page, `_token_counts`. The posting budget
+and the length file are explained with the ranking choices in
+[Milestone 3 — Person B: Lengths and damped ranking](#milestone-3--person-b-lengths-and-damped-ranking).
 
 ```python
 def add_document(self, doc: Document, tokens: dict[str, tuple[int, int]]) -> None:
 def flush(self) -> None:
 ```
 
-`add_document` appends one `Posting` per token and remembers `(doc_id, url)`.
-It does not write index lines. A page with no tokens is still remembered,
-because Milestone 2 needs its URL. Every accepted page counts toward the flush
-threshold. When the count reaches `flush_every`, `add_document` calls `flush`.
+`add_document` appends one `Posting` per token, remembers `(doc_id, url)`, and
+stores the page length as the sum of `tf`. It does not write index lines. A
+page with no tokens is still remembered, because Milestone 2 needs its URL,
+and its length is 0. Every accepted page counts toward `flush_every`. Every
+new `Posting` counts toward `flush_postings`. When either limit is reached,
+`add_document` calls `flush`.
 
 `flush` writes the current term map to `out_dir/partials/partial-000.txt`, then
 `partial-001.txt`, and so on. Terms are alphabetical. Postings on a line are
 ordered by `doc_id`, so a batch that received documents out of order still
 produces a sorted line. After the file write succeeds, the term map is cleared.
-The URL list is kept. Each flush rewrites `doc_ids.tsv` from that full list, in
-the order pages were added, including pages with no tokens. A row is
-`doc_id<TAB>url`.
+The URL list and the token counts are kept. Each flush rewrites `doc_ids.tsv`
+and `doc_lengths.tsv` from those full lists, in the order pages were added,
+including pages with no tokens. A URL row is `doc_id<TAB>url`. A length row is
+`doc_id<TAB>token_count`.
 
 `postings(term)` returns the postings still in memory. `documents`,
 `partial_paths`, and `flush_count` are properties, so they are read without
@@ -666,10 +758,11 @@ parentheses. `documents` and `partial_paths` return copies. There is no setter.
 
 Decisions:
 
-- The batch size counts documents rather than measuring process memory. The
-  default of 15,000 documents produces four partials for about 56,000 pages,
-  which satisfies the requirement of at least three dumps. The split protects
-  memory; one large file would fit on disk.
+- The batch size counts documents and in-memory postings rather than measuring
+  process memory. The default of 15,000 documents produces four partials for
+  about 56,000 pages, which satisfies the requirement of at least three dumps.
+  The posting budget of 500,000 stops one wide batch from holding millions of
+  `Posting` objects. The split protects memory; one large file would fit on disk.
 - An empty term map does not create a partial file, so a blank batch is not
   counted as one of those dumps. `flush()` on a new indexer creates nothing.
 - A short final batch stays in memory. The caller calls `flush()` once after
@@ -713,7 +806,8 @@ Decisions:
 | --- | --- |
 | `tests/test_indexer.py` `InMemoryIndexTests` | `tf` is stored unchanged, later documents append in order, and a page with no tokens keeps its id and URL. |
 | `tests/test_indexer.py` `PostingLineTests` | A line round-trips through `parse_line`, caller order is preserved, and an empty posting list is rejected. |
-| `tests/test_indexer.py` `PartialFlushTests` | Six documents with a batch size of two produce three sorted partials, a short tail is written by an explicit flush, and an empty map creates no partial file. |
+| `tests/test_indexer.py` `PartialFlushTests` | Six documents with a batch size of two produce three sorted partials, a short tail is written by an explicit flush, an empty map creates no partial file, and a posting budget flushes before the document threshold. |
+| `tests/test_indexer.py` `DocumentLengthTests` | `doc_lengths.tsv` stores the sum of `tf` for every accepted page, including 0 for an empty page, and a later flush rewrites the whole file. |
 | `tests/test_merge.py` `test_several_partials_match_one_single_pass_index` | Merging several partials matches one single-batch index, and the offset table can seek to `cat`. |
 
 Run from the repository root with the command in the Person A section. Person B's
@@ -758,6 +852,7 @@ Every index directory (for example `index/`) contains:
 | `index.txt` | Merge (B) through `IndexWriter` (C) | One line per term, sorted: `term<TAB>doc_id:tf:imp,doc_id:tf:imp,...` |
 | `offsets.tsv` | `IndexWriter` (C) | `term<TAB>byte offset of that term's line in index.txt` |
 | `doc_ids.tsv` | Indexer (B) | `doc_id<TAB>url` |
+| `doc_lengths.tsv` | Indexer (B) | `doc_id<TAB>token_count`, aligned with `doc_ids.tsv`. The count is the sum of `tf` and does not include `imp`. |
 | `partials/partial-NNN.txt` | Indexer (B) | Same line format as `index.txt`, one file per flush |
 
 The line format itself is defined once, in `posting.format_line` and
@@ -888,8 +983,8 @@ python -m src.main stats --index index/
 1. `iter_documents` reads each JSON page (A).
 2. `extract_tokens` turns the page into `{term: (tf, imp)}` (A + tokenizer).
 3. `Indexer.add_document` collects postings and flushes a sorted partial file
-   every `--flush-every` documents (B).
-4. `Indexer.flush()` saves the last batch and `doc_ids.tsv` (B).
+   every `--flush-every` documents or every 500,000 postings (B).
+4. `Indexer.flush()` saves the last batch, `doc_ids.tsv`, and `doc_lengths.tsv` (B).
 5. `merge_partials` merges the partials into `index.txt` + `offsets.tsv` (B,
    through `IndexWriter`).
 6. Prints a summary and the stats table.
