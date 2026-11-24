@@ -115,7 +115,10 @@ def run_build(data_dir, out_dir, flush_every):
     print()
     print(f"Documents indexed:      {indexed:,}")
     print(f"Documents skipped:      {skipped:,} (parse errors; see warnings above)")
-    print(f"Partial index files:    {len(partials)} (flush every {flush_every:,} docs)")
+    print(
+        f"Partial index files:    {len(partials)} "
+        f"(flush every {flush_every:,} docs or {indexer.flush_postings:,} postings)"
+    )
     print(f"Merge time:             {merge_seconds:,.1f} s")
     print(f"Total build time:       {total_seconds:,.1f} s")
     print(f"Peak memory:            {peak_memory_mb():,.1f} MB")

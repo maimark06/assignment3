@@ -89,7 +89,16 @@ class Searcher:
         if not matches:
             return [], 0
 
-        ranked = rank(matches, dfs, self.doc_count, k)
+        # Length damping needs doc_lengths.tsv. Until that file is loaded,
+        # every page has the same length, so the length norm is 1.
+        ranked = rank(
+            matches,
+            dfs,
+            self.doc_count,
+            k,
+            lengths=[1] * self.doc_count,
+            avg_length=1.0,
+        )
         results = [Result(doc_id, self.urls[doc_id], score) for doc_id, score in ranked]
         return results, len(matches)
 
