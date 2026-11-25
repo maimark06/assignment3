@@ -1,5 +1,100 @@
 # Assignment 3 — Progress and Design Notes
 
+## Milestone 3 — Person A: Query Evaluation and Parser Ownership
+
+Updated November 25, 2026. Person A owns query evaluation notes, parser tests,
+the optional title signal, and any needed query/console adjustments. Ranking
+math and index access remain with Persons B and C.
+
+### Step 1: Prepare the evaluation record
+
+Location: `QUERY_NOTES.txt` (plain text). No application function was changed
+in this step because recording a baseline comes before further ranking changes.
+
+The file lists 20 candidate queries: 10 possible controls and 10 possible difficult
+queries. It includes all four required M2 queries. Each query has an expected
+page type and a concrete relevance check. Actual URLs are intentionally not
+invented. The notes about maven-contents.txt, publication lists, and DVD.txt are
+reports from the team plan, not results independently reproduced here.
+
+The recording template asks for the engine revision, index build, top 5 URLs,
+elapsed time, match-count definition, expected URL, initial quality and reason,
+and corresponding after-change observations. Save the same queries for both
+runs. Candidate groups must be corrected after measurement: the final set must
+contain at least 10 queries actually observed to perform poorly initially in
+relevance, runtime, or both, with good queries serving as controls.
+
+Current limitations:
+
+- The working project is the repository root; no nested `assignment3/` directory
+  exists here. The root `CLAUDE3.md` was used as the plan.
+- Neither `index/` nor `data/` exists locally, so no real baseline was run.
+- `ranking.py` already includes length damping and the new parameters.
+  `Searcher.search` currently supplies placeholder lengths of 1. Results from
+  this code must not be presented as the unchanged M2 baseline. The professor
+  does not require reverting to M2: the team can freeze and measure this version
+  before further changes, noting what was already implemented. Saved M2 results
+  or a compatible M2 revision are needed only for claims comparing against M2.
+
+### Optional title signal: deferred for now
+
+Keep the existing `(tf, imp)` parser output and `doc_id:tf:imp` posting format.
+Title occurrences already contribute to `imp`, alongside bold and heading text.
+No separate title count or independent title weight was added. This avoids a
+format change before a team agreement and keeps Person B's posting work separate.
+Revisit only if the team explicitly freezes a new title field and rebuild plan.
+
+### Next steps and handoff
+
+1. Obtain a compatible index and freeze the baseline revision, or obtain the
+   team's saved baseline records with their revision and index details.
+2. Run/review the candidates, fill actual URLs and reasons, and replace candidates
+   as needed to reach at least 10 verified poor queries and a useful control set.
+3. Give the completed notes to Person C for the evaluation helper and `TEST.txt`.
+4. Re-run the same queries after the team's changes and explain improvements and
+   any control-query regressions. Console match-count wording may need updating
+   once Person C finalizes AND fill-in semantics.
+5. Prepare a demo explanation of tokenization, stemming, stop words, important
+   tag extraction, and the full query path.
+
+Validation for this step: checked all 20 candidate entries and the four required
+queries. No search quality, performance, or full-corpus claims have been verified.
+
+### Professor instructions checked before the first M3 commit
+
+The supplied full specification and current course notice take priority over
+the team's planning file. The current notice says interviews are in person;
+ignore the older online screen-sharing and camera instructions.
+
+- Evaluate at least 20 queries for both ranking quality and runtime. At least
+  half should start poorly in either criterion; the other half should perform
+  well. The candidate list is not proof that this requirement has been met.
+- Record improvements using general methods and preserve good-query behavior.
+  Do not hard-code special ranking rules for the evaluation queries or URLs.
+- Submit all project programs, README.txt, and TEST.txt in the zip. Both named
+  documents must be plain text. README.txt must explain index building, starting
+  the interface, and running a query, with enough setup detail to reproduce it.
+- TEST.txt needs tested queries, comments identifying initial problems, and
+  explanations of changes actually made. Top-5 tables and screenshots are not
+  required for M3; QUERY_NOTES.txt holds optional internal evaluation evidence
+  and does not replace TEST.txt. No separate M3 PDF is specified in this notice.
+- A console interface is allowed. Keep the developer response-time target of
+  at most 300 ms, disk-based postings, and a memory footprint smaller than the
+  index size for both indexing and search.
+- The professor requires important-text weighting, which the existing imp field
+  already supports for titles, headings, and bold text. A separate title field,
+  the exact BM25-style formula, and partial-match fill-in are team design choices,
+  not explicit professor requirements. Deferring the separate field is acceptable.
+- Every member must attend the in-person interview and explain the entire engine,
+  including design choices and tradeoffs. Missing the interview means zero for
+  the entire assignment under the current notice.
+- Check the current Canvas due date. The supplied notice allows at most two late
+  days with a 25% grade penalty; older example dates are not the current schedule.
+
+This review changes evaluation and handoff notes only. No parser or ranking
+function needs changing based on these instructions at this step. Actual query
+evaluation remains pending a compatible index.
+
 ## Milestone 2 — Person A: Query Processing and Console Interface
 
 Updated November 13, 2026. This section describes the current M2 work. The M1

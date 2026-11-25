@@ -1,0 +1,149 @@
+Milestone 3 - Person A query evaluation notes
+Prepared: November 25, 2026
+
+STATUS
+These are 20 candidate queries, not measured results. The local index is not
+available. No query has yet been verified as good or poor on the full corpus.
+The first group proposes controls; the second proposes difficult queries.
+Reclassify or replace queries after running them so at least half of the final
+evaluation queries are documented as initially poor in relevance, runtime, or
+both. For a 20-query set, confirm 10 poor queries and 10 good controls through
+measurement rather than assuming the candidate groups are already correct.
+
+BASELINE RULES
+Save the top 5 URLs before further ranking changes, using the same queries.
+Record the engine commit and index version/build details for each run. The
+current code already contains the new rank signature and damping logic, so
+do not label its results as the original M2 baseline. The professor does not
+require an M2-only baseline: the team may freeze and measure the current engine
+before further improvements, explicitly recording changes already present.
+Use saved M2 results or an agreed compatible M2 revision only when claiming
+improvements specifically relative to M2.
+Never overwrite the original baseline with later results.
+
+Timing check for every query: record response time and investigate any run
+over the developer target of 300 ms. Consider both slow and irrelevant queries
+when choosing the final poor-query group.
+
+For each query, fill in:
+  Baseline engine commit / index build:
+  Baseline top 5 URLs (in rank order):
+  Search time (ms) / match count and its definition:
+  Expected URL (verify from corpus/results; do not invent it):
+  Initial quality: good / poor relevance, runtime, or both, with evidence:
+  After-change engine commit / index build:
+  After-change top 5 URLs / time / match count:
+  Better, unchanged, or worse? Why?
+
+GROUP 1 - CANDIDATE CONTROLS (ALL UNVERIFIED)
+
+01. cristina lopes
+    Expected: her faculty or research homepage.
+    Check: direct faculty pages should be above unrelated mentions.
+
+02. alexander ihler
+    Expected: his faculty or research homepage.
+    Check: a direct page should be above publication lists merely mentioning him.
+
+03. michael goodrich
+    Expected: his faculty or research homepage.
+    Check: pages about the person should be above incidental references.
+
+04. padhraic smyth
+    Expected: his faculty or research homepage.
+    Check: direct pages should remain visible after ranking changes.
+
+05. david eppstein
+    Expected: his faculty or research homepage.
+    Check: long publication pages should not displace a clearly relevant homepage.
+
+06. richard lathrop
+    Expected: his faculty or research homepage.
+    Check: direct pages versus incidental references.
+
+07. rina dechter
+    Expected: her faculty or research homepage.
+    Check: preserve every query term, including the first name.
+
+08. informatics 121
+    Expected: a course page about Informatics 121, if present in this corpus.
+    Check: both the department name and course number must be meaningful matches.
+
+09. ICS 33
+    Expected: an ICS 33 course page, if present in this corpus.
+    Check: alphanumeric processing preserves the course number.
+
+10. computational vision
+    Expected: a relevant lab, group, or research page in the corpus.
+    Check: the page topic should match both words, not just scattered mentions.
+
+GROUP 2 - CANDIDATE DIFFICULT QUERIES (ALL UNVERIFIED LOCALLY)
+
+11. machine learning
+    Expected: a relevant research, program, or course page.
+    Team plan reports: maven-contents.txt ranked first previously.
+    Check: a giant technical dump should not beat a focused relevant page.
+
+12. ACM
+    Expected: a relevant ACM organization or student chapter page, if present.
+    Team plan reports: publication lists appeared prominently previously.
+    Check: explain the intended meaning; ACM is ambiguous, and a publication
+    page is not automatically wrong just because it mentions ACM.
+
+13. master of software engineering
+    Expected: the software engineering master's program page.
+    Team plan reports: DVD.txt ranked above MSWE pages previously.
+    Check: keep "of"; distinguish program information from unrelated dumps.
+
+14. software engineering
+    Expected: a relevant program, department, or research page.
+    Check: long pages with repeated words versus focused overview pages.
+
+15. artificial intelligence
+    Expected: an AI research, group, or course page.
+    Check: topical relevance rather than raw repetition in large lists.
+
+16. information retrieval
+    Expected: a relevant course or research page.
+    Check: both terms should describe the topic rather than incidental mentions.
+
+17. computer security
+    Expected: a security research, lab, or course page.
+    Check: focused security content versus broad document collections.
+
+18. data mining
+    Expected: a data mining research or course page.
+    Check: short relevant pages should compete with long technical dumps.
+
+19. graduate admissions
+    Expected: graduate admissions instructions or requirements.
+    Check: actionable admissions content versus unrelated graduate pages.
+
+20. undergraduate research
+    Expected: undergraduate research opportunities or program information.
+    Check: pages covering the combined topic versus scattered word matches.
+
+HANDOFF AND FORMAT DECISION
+Person C owns the evaluation helper and final TEST.txt formatting. These notes
+provide candidate queries and review criteria, not a second evaluation tool.
+Title work is deferred for now: retain (tf, imp) and doc_id:tf:imp until the team
+explicitly agrees otherwise. Title text already contributes to imp. A separate
+title boost cannot be tuned independently without adding a title field.
+The deferral can satisfy the optional-title choice; baseline evaluation still
+requires real results and at least 10 confirmed initially poor queries.
+
+FINAL SUBMISSION AND DEMO
+This file is a working record, not the required final TEST.txt. Person C will
+produce TEST.txt as plain text with at least 20 tested queries, comments on
+which started poorly, and explanations of the actual changes made. Full result
+tables, exact expected URLs, and screenshots are not required M3 deliverables;
+top-5 records are internal evidence for judging improvements and regressions.
+Use general improvements, not rules hard-coded for these queries or URLs.
+The zip must include all project programs plus plain-text README.txt and
+TEST.txt. README.txt must explain setup, index construction, starting search,
+and running a query. The index does not need to be submitted; the README must
+allow it to be rebuilt. A console interface remains acceptable.
+The latest course notice says interviews are IN PERSON; it overrides the older
+online/video instructions. Every member must attend and explain the full
+pipeline, implementation choices, and effectiveness/runtime tradeoffs.
+Use the current Canvas deadline, not dates from older specification examples.
