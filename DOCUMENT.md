@@ -95,6 +95,49 @@ This review changes evaluation and handoff notes only. No parser or ranking
 function needs changing based on these instructions at this step. Actual query
 evaluation remains pending a compatible index.
 
+### Step 3: Test the console with a real temporary index
+
+Function: `ConsoleIntegrationTests.test_search_command_uses_real_temporary_index`.
+Location: `tests/test_console_integration.py`.
+
+This test can run before the teammate's full corpus index is ready. It creates
+three synthetic documents in a TemporaryDirectory: an ACM chapter page, a
+software engineering master's program page, and an unrelated page. It uses the
+real parser, tokenizer, Indexer, partial-index merge, Searcher, retrieval, ranking,
+and main command. Only interactive input is mocked, and printed output is captured.
+
+Processing steps:
+
+1. Convert each synthetic HTML page into tokens and add its Document to an
+   Indexer configured to flush after each document.
+2. Flush and merge the partials into a real on-disk index in the temporary folder.
+3. Call `main(["search", "--index", temporary_path, "--top", "1"])`.
+4. Supply blank input, `ACM acm`, `master of software engineering`, `!!!`, and
+   `quit`. This checks blank-input handling, normalization and deduplication,
+   the multi-term query path including `of`, no-term input, and normal exit.
+5. Verify that the matching synthetic URLs, rank and score labels, match counts,
+   timing labels, no-results message, and goodbye message appear. The unrelated
+   URL must not appear. No specific timing value or ranking score is asserted.
+6. Exit TemporaryDirectory and verify the temporary index directory is gone.
+
+No production function, posting format, scoring parameter, teammate module, or
+formal index is changed. Synthetic documents and generated index files are not
+committed. This is an integration regression test, not evidence of full-corpus
+relevance, a 20-query baseline, memory compliance, or the 300 ms target.
+The current Searcher still passes placeholder document lengths to ranking; this
+test does not claim that Person C's final length wiring or fill-in is complete.
+
+Validation: all 86 tests passed, including the new integration test. Dependencies
+from requirements.txt were installed under `/tmp/assignment3-m3-deps` and tests
+ran in `/tmp/assignment3-m3-venv`, avoiding changes to the system Python or the
+repository's dependency declarations. In a normally configured project environment,
+run `python3 -B -m unittest discover -s tests -p test_console_integration.py -v`
+for this test, or omit the `-p` option for the complete suite.
+
+Full-corpus query evaluation remains pending an actual index or saved results.
+The independent temporary-index check is now complete and can be handed to C
+as a regression check when the remaining backend changes arrive.
+
 ## Milestone 2 — Person A: Query Processing and Console Interface
 
 Updated November 13, 2026. This section describes the current M2 work. The M1
