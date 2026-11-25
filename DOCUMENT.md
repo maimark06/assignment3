@@ -138,6 +138,121 @@ Full-corpus query evaluation remains pending an actual index or saved results.
 The independent temporary-index check is now complete and can be handed to C
 as a regression check when the remaining backend changes arrive.
 
+### Step 4: Person A in-person demo walkthrough
+
+This is a preparation guide, not a claim that the mock interview or full-corpus
+evaluation has been completed. No application function changes in this step.
+Examples below were executed with the actual parser and tokenizer in the
+isolated temporary environment from Step 3.
+
+#### Show the indexing-side text processing
+
+Start in `src/corpus.py`: `iter_documents` yields a Document with a sequential
+ID, fragment-free URL, and Unicode HTML string. Then show `src/parser.py`.
+`extract_text` removes scripts/styles, ignores comments, and visits each text
+node once. Checking its ancestors identifies important text without counting
+nested important tags twice. This does not evaluate CSS visibility.
+
+Use this small page to explain the behavior:
+
+```html
+<title>Machine Learning</title>
+<h1>Learning <strong>machines</strong></h1>
+<p>Master of software engineering, ab12 and 3rd.</p>
+<script>hidden</script>
+```
+
+`extract_text` returns:
+
+```python
+(
+    "Machine Learning Learning machines Master of software engineering, ab12 and 3rd.",
+    "Machine Learning Learning machines",
+)
+```
+
+`extract_tokens` calls the same tokenizer on both strings and counts occurrences:
+
+```python
+{
+    "machin": (2, 2), "learn": (2, 2), "master": (1, 0),
+    "of": (1, 0), "softwar": (1, 0), "engin": (1, 0),
+    "ab12": (1, 0), "and": (1, 0), "3rd": (1, 0),
+}
+```
+
+Each tuple means `(total frequency, important frequency)`. Title and heading
+occurrences already count in total frequency. The nested strong tag does not
+produce an extra occurrence of `machines`. Script content never becomes a token.
+The parser records evidence; ranking decides how much additional weight to give it.
+
+#### Explain the tokenizer and query preparation
+
+Open `src/tokenizer.py`, then `src/query.py`.
+
+- `tokenize` lowercases, matches `[a-z0-9]+`, and Porter-stems every occurrence.
+  The stem cache avoids recomputing stems for repeated word forms. This regex
+  uses ASCII letters/digits; it is not full Unicode word segmentation.
+- Stemming improves matches between word forms but is not semantic understanding:
+  it can produce stems that are not dictionary words.
+- Indexing keeps repetitions because frequency affects ranking. Query preparation
+  removes duplicate stems because repeating a term does not change AND matches.
+- Stop words remain because the assignment disallows stopping. In particular,
+  `of` in the master's program query is searched, even though its posting list
+  can be long.
+
+Verified examples:
+
+```python
+tokenize("Running runs ab12 3rd")
+# ["run", "run", "ab12", "3rd"]
+parse_query("Running runs ab12 3rd")
+# ["run", "ab12", "3rd"]
+parse_query("master of software engineering")
+# ["master", "of", "softwar", "engin"]
+```
+
+#### Walk the complete search path
+
+1. `src/main.py: main` reads the search arguments and calls `run_search`.
+2. `src/search_cli.py: run_search` opens one Searcher and prompts repeatedly.
+3. `src/searcher.py: Searcher.search` calls `parse_query`, checks terms, orders
+   them by posting-line size, and requests postings from IndexReader.
+4. `src/index_io.py: IndexReader.lookup` seeks to a term's line on disk. It does
+   not load the entire inverted index. The current reader still stores the full
+   offset table; sparse offsets are Person C's planned memory improvement.
+5. `src/retrieval.py: intersect` merges doc-ID-sorted lists using forward pointers
+   and retains pages present in every list. Term ordering must stay aligned with
+   document frequencies and per-term postings passed to ranking.
+6. `src/ranking.py: rank` sums damped term-frequency weights times `log10(N/df)`,
+   using important-text evidence, and selects top k. Higher scores come first;
+   smaller document IDs break ties. Explain that this is BM25-style TF damping
+   with the project's IDF, not a claim of a complete standard BM25 implementation.
+7. Searcher maps IDs to URLs. The console displays rankings, scores, match count,
+   and elapsed milliseconds. Timing surrounds only `Searcher.search`, excluding
+   initialization, input waiting, and output formatting.
+
+#### Distinguish current behavior from planned M3 behavior
+
+- Current Searcher supplies lengths of 1 and an average of 1, so document-length
+  correction is not yet using real page sizes even though TF saturation exists.
+- Current matching is AND-only; missing terms yield no results. Partial-match
+  fill-in has not landed. Currently `Matches` means all AND matches before the
+  top-k cutoff; revisit this explanation after Person C's interface changes.
+- Important tags share the imp field. An independent title weight is deferred.
+- Unit/integration tests do not prove the full-corpus memory or latency targets.
+  Do not claim sparse offsets, real length normalization, completed 20-query
+  evaluation, or measured improvements before they are implemented and measured.
+
+Practice answering why shared tokenization matters, why stop words stay, why
+important counts are a subset of total counts, how sorted postings support AND,
+why long pages can dominate raw frequency, and why postings remain on disk.
+All team members must understand the whole pipeline, including teammates' parts.
+
+Validation: executed the displayed text extraction, token counts, and query
+examples against real code; checked `git diff --check`. This documentation-only
+step does not require rerunning the unchanged application test suite.
+
 ## Milestone 2 — Person A: Query Processing and Console Interface
 
 Updated November 13, 2026. This section describes the current M2 work. The M1
