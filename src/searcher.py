@@ -4,13 +4,20 @@ Query flow (owner in brackets):
 
     query text
       -> parse_query        stemmed, deduplicated terms          [A, query.py]
-      -> missing term?      AND cannot match -> no results       [C, here]
+      -> drop missing terms they cannot match any page           [C, here]
       -> posting_size       order terms shortest list first      [C, index_io]
       -> IndexReader.lookup seek() to each term's line on disk   [C, index_io]
       -> intersect          docs that contain every term         [B, retrieval.py]
       -> rank               damped tf-idf + important boost,
                             long pages damped by length, top k   [B, ranking.py]
+      -> fill-in            fewer than k AND matches: add pages
+                            with the most query terms            [C, here]
       -> doc_id -> URL      from doc_ids.tsv                     [C, here]
+
+Fill-in rule: pages with every query term (AND matches) always come first.
+Remaining slots go to pages with more query terms before pages with fewer;
+within the same number of terms, higher score first, then smaller doc_id.
+total_matches counts only the AND matches.
 
 Memory: only the offset table, the doc_id -> URL list and the doc_id ->
 length list stay in RAM.
@@ -23,6 +30,7 @@ from pathlib import Path
 from typing import Union
 
 from .index_io import IndexReader, load_doc_lengths, load_doc_urls
+from .posting import Posting
 from .query import parse_query
 from .ranking import rank
 from .retrieval import intersect
@@ -34,11 +42,17 @@ PathLike = Union[str, Path]
 
 @dataclass
 class Result:
-    """One ranked search result."""
+    """One ranked search result.
+
+    matched_terms is how many distinct query terms the page contains. It
+    equals the number of query terms for an AND match and is smaller for a
+    fill-in (partial) match.
+    """
 
     doc_id: int
     url: str
     score: float
+    matched_terms: int
 
 
 class Searcher:
@@ -78,10 +92,14 @@ class Searcher:
         self.avg_length = max(sum(self.lengths) / self.doc_count, 1.0)
 
     def search(self, query: str, k: int = 5) -> tuple[list[Result], int]:
-        """Return (top k results best first, total number of AND matches).
+        """Return (up to k results best first, number of AND matches).
 
-        Returns ([], 0) for a query with no terms, or when any term is not in
-        the index (AND needs every term, so nothing can match).
+        AND matches (pages with every query term) come first. If there are
+        fewer than k, partial matches fill the rest (see the module notes).
+        The count is AND matches only, so it can be 0 while partial matches
+        are still returned, e.g. when one query term is not in the index.
+
+        Returns ([], 0) for a query with no terms or with no term in the index.
         """
         if k < 1:
             raise ValueError("k must be at least 1")
@@ -89,25 +107,42 @@ class Searcher:
         terms = parse_query(query)
         if not terms:
             return [], 0
-        for term in terms:
-            if term not in self.reader:
-                return [], 0
+        # A term not in the index matches no page; checking costs no disk read.
+        present = [term for term in terms if term in self.reader]
+        if not present:
+            return [], 0
 
         # Shortest posting list first: intersecting from the rarest term keeps
         # the running result small. posting_size reads no postings.
-        terms.sort(key=self.reader.posting_size)
+        present.sort(key=self.reader.posting_size)
 
-        posting_lists = [self.reader.lookup(term) for term in terms]
+        posting_lists = [self.reader.lookup(term) for term in present]
         # df of each term = length of its posting list, in the same order.
         dfs = [len(postings) for postings in posting_lists]
 
-        matches = intersect(posting_lists)
-        if not matches:
-            return [], 0
+        # A missing term means no page has every query term.
+        all_present = len(present) == len(terms)
+        matches = intersect(posting_lists) if all_present else {}
 
+        results = [
+            Result(doc_id, self.urls[doc_id], score, len(terms))
+            for doc_id, score in self._rank(matches, dfs, k)
+        ]
+        if len(results) < k:
+            results += self._partial_results(
+                posting_lists, dfs, k - len(results), skip_size=len(terms)
+            )
+        return results, len(matches)
+
+    def _rank(
+        self, matches: dict[int, list[Posting]], dfs: list[int], k: int
+    ) -> list[tuple[int, float]]:
+        """Person B's rank with this index's N and page lengths."""
+        if not matches:
+            return []
         # Longer-than-average pages get a smaller tf part, so a huge dump
         # that mentions a term many times does not beat a focused page.
-        ranked = rank(
+        return rank(
             matches,
             dfs,
             self.doc_count,
@@ -115,8 +150,55 @@ class Searcher:
             lengths=self.lengths,
             avg_length=self.avg_length,
         )
-        results = [Result(doc_id, self.urls[doc_id], score) for doc_id, score in ranked]
-        return results, len(matches)
+
+    def _partial_results(
+        self,
+        posting_lists: list[list[Posting]],
+        dfs: list[int],
+        needed: int,
+        skip_size: int,
+    ) -> list[Result]:
+        """Best `needed` pages that contain some, but not all, query terms.
+
+        Pages are grouped by which terms they contain, so each group can go
+        through rank with the dfs of exactly those terms. Groups with more
+        terms are used first; a group with fewer terms is only scored when
+        the slots are not yet full. Groups of skip_size terms are the AND
+        matches, which search already returned.
+        """
+        # doc_id -> (indexes of the terms it contains, their postings).
+        # posting_lists are read in order, so both lists stay in term order.
+        found: dict[int, tuple[list[int], list[Posting]]] = {}
+        for term_index, postings in enumerate(posting_lists):
+            for posting in postings:
+                entry = found.get(posting.doc_id)
+                if entry is None:
+                    found[posting.doc_id] = ([term_index], [posting])
+                else:
+                    entry[0].append(term_index)
+                    entry[1].append(posting)
+
+        # (term indexes) -> {doc_id: postings}: one group per set of terms.
+        groups: dict[tuple[int, ...], dict[int, list[Posting]]] = {}
+        for doc_id, (term_indexes, postings) in found.items():
+            if len(term_indexes) == skip_size:
+                continue  # an AND match, already in the results
+            groups.setdefault(tuple(term_indexes), {})[doc_id] = postings
+
+        results: list[Result] = []
+        for size in range(len(posting_lists), 0, -1):
+            if len(results) == needed:
+                break
+            # Rank each group of this size, then merge them by score.
+            level: list[tuple[int, float]] = []
+            for term_indexes, matches in groups.items():
+                if len(term_indexes) == size:
+                    group_dfs = [dfs[i] for i in term_indexes]
+                    level += self._rank(matches, group_dfs, needed - len(results))
+            level.sort(key=lambda item: (-item[1], item[0]))
+            for doc_id, score in level[: needed - len(results)]:
+                results.append(Result(doc_id, self.urls[doc_id], score, size))
+        return results
 
     def close(self) -> None:
         """Close the index file."""

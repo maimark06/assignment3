@@ -74,6 +74,12 @@ def urls(results) -> set[str]:
     return {result.url for result in results}
 
 
+def full_matches(results) -> set[str]:
+    """URLs of the results that contain every query term (AND matches)."""
+    most = max(result.matched_terms for result in results)
+    return {result.url for result in results if result.matched_terms == most}
+
+
 class SearcherTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -90,22 +96,25 @@ class SearcherTests(unittest.TestCase):
 
     # --- AND retrieval ---------------------------------------------------
 
-    def test_and_returns_only_pages_with_every_term(self):
-        """Pages with only "machine" or only "learning" are left out."""
-        results, total = self.searcher.search("machine learning", k=10)
+    def test_and_matches_come_first_and_are_counted(self):
+        """Only pages with both terms count; they fill the first slots."""
+        results, total = self.searcher.search("machine learning", k=3)
         self.assertEqual(total, 3)
         self.assertEqual(
             urls(results),
             {"https://a.edu/ml-title", "https://a.edu/ml-plain", "https://a.edu/acm"},
         )
+        self.assertEqual([result.matched_terms for result in results], [2, 2, 2])
 
     def test_stop_words_are_searched_not_dropped(self):
         """'of' is indexed, and 'master' rules out the Lopes page."""
         results, total = self.searcher.search("master of software engineering")
         self.assertEqual(total, 1)
-        self.assertEqual(urls(results), {"https://a.edu/mse"})
+        self.assertEqual(results[0].url, "https://a.edu/mse")
+        self.assertEqual(full_matches(results), {"https://a.edu/mse"})
 
         results, total = self.searcher.search("of software engineering")
+        self.assertEqual(total, 2)
         self.assertEqual(urls(results), {"https://a.edu/mse", "https://a.edu/lopes"})
 
     def test_total_counts_all_matches_when_k_is_smaller(self):
@@ -133,10 +142,24 @@ class SearcherTests(unittest.TestCase):
 
     # --- No results ------------------------------------------------------
 
-    def test_missing_term_gives_no_results(self):
-        """One unknown term is enough: AND cannot match any page."""
+    def test_query_with_no_known_term_gives_no_results(self):
         self.assertEqual(self.searcher.search("quantum"), ([], 0))
-        self.assertEqual(self.searcher.search("machine quantum"), ([], 0))
+        self.assertEqual(self.searcher.search("quantum zebra"), ([], 0))
+
+    def test_missing_term_falls_back_to_partial_matches(self):
+        """No page has 'quantum', so AND finds 0, but 'machine' pages fill in."""
+        results, total = self.searcher.search("machine quantum", k=10)
+        self.assertEqual(total, 0)
+        self.assertEqual(
+            urls(results),
+            {
+                "https://a.edu/ml-title",
+                "https://a.edu/ml-plain",
+                "https://a.edu/machine-shop",
+                "https://a.edu/acm",
+            },
+        )
+        self.assertTrue(all(result.matched_terms == 1 for result in results))
 
     def test_empty_and_punctuation_queries_give_no_results(self):
         for query in ["", "   ", "!!!", "--- ???"]:
@@ -161,12 +184,72 @@ class SearcherTests(unittest.TestCase):
         looked_up = [call.args[0] for call in lookup.call_args_list]
         self.assertEqual(looked_up, ["acm", "machin"])
 
-    def test_missing_term_skips_disk_reads(self):
-        """When a term is absent, no posting list is read at all."""
+    def test_missing_terms_are_never_read_from_disk(self):
+        """A term not in the index is skipped before any posting list is read."""
         reader = self.searcher.reader
         with patch.object(reader, "lookup", wraps=reader.lookup) as lookup:
             self.searcher.search("machine quantum")
+        self.assertEqual([call.args[0] for call in lookup.call_args_list], ["machin"])
+
+        with patch.object(reader, "lookup", wraps=reader.lookup) as lookup:
+            self.searcher.search("quantum zebra")
         lookup.assert_not_called()
+
+    # --- Fill-in from partial matches -------------------------------------
+
+    def test_partial_matches_fill_slots_after_and_matches(self):
+        """3 AND matches, then the 2 pages that have only one of the terms."""
+        results, total = self.searcher.search("machine learning", k=10)
+        self.assertEqual(total, 3)
+        self.assertEqual(len(results), 5)
+        self.assertEqual(
+            urls(results[:3]),
+            {"https://a.edu/ml-title", "https://a.edu/ml-plain", "https://a.edu/acm"},
+        )
+        self.assertEqual(
+            urls(results[3:]), {"https://a.edu/machine-shop", "https://a.edu/cooking"}
+        )
+        self.assertEqual([r.matched_terms for r in results], [2, 2, 2, 1, 1])
+
+    def test_pages_with_more_query_terms_come_first(self):
+        """'machine acm learning': acm page has 3 terms, ml pages 2, others 1."""
+        results, total = self.searcher.search("machine acm learning", k=10)
+        self.assertEqual(total, 1)
+        self.assertEqual(results[0].url, "https://a.edu/acm")
+        counts = [result.matched_terms for result in results]
+        self.assertEqual(counts, [3, 2, 2, 1, 1])
+        self.assertEqual(
+            urls(results[1:3]), {"https://a.edu/ml-title", "https://a.edu/ml-plain"}
+        )
+
+    def test_partial_matches_are_ranked_by_score_within_a_level(self):
+        """Same number of terms: higher score first (title page beats plain)."""
+        results, _ = self.searcher.search("machine acm learning", k=10)
+        self.assertEqual(
+            [results[1].url, results[2].url],
+            ["https://a.edu/ml-title", "https://a.edu/ml-plain"],
+        )
+        self.assertGreaterEqual(results[1].score, results[2].score)
+
+    def test_fill_in_never_repeats_a_page(self):
+        for query in ["machine learning", "master of software engineering", "of"]:
+            results, _ = self.searcher.search(query, k=10)
+            doc_ids = [result.doc_id for result in results]
+            self.assertEqual(len(doc_ids), len(set(doc_ids)), query)
+
+    def test_no_fill_in_work_when_and_fills_k(self):
+        with patch.object(
+            self.searcher, "_partial_results", wraps=self.searcher._partial_results
+        ) as partial:
+            results, _ = self.searcher.search("machine learning", k=3)
+        partial.assert_not_called()
+        self.assertEqual(len(results), 3)
+
+    def test_fill_in_stops_at_k(self):
+        results, total = self.searcher.search("machine learning", k=4)
+        self.assertEqual(total, 3)
+        self.assertEqual(len(results), 4)
+        self.assertEqual(results[3].matched_terms, 1)
 
     def test_doc_count_is_number_of_pages(self):
         self.assertEqual(self.searcher.doc_count, len(PAGES))
@@ -174,11 +257,13 @@ class SearcherTests(unittest.TestCase):
     # --- Ranking (needs Person B's ranking.py) ---------------------------
 
     @unittest.skipUnless(RANKING_AVAILABLE, "src/ranking.py not added yet")
-    def test_scores_are_sorted_best_first(self):
+    def test_scores_are_sorted_best_first_within_each_level(self):
+        """Score order holds among pages with the same number of query terms."""
         results, _ = self.searcher.search("machine learning", k=10)
-        scores = [result.score for result in results]
-        self.assertEqual(scores, sorted(scores, reverse=True))
-        self.assertGreater(scores[0], 0)
+        for count in {result.matched_terms for result in results}:
+            scores = [r.score for r in results if r.matched_terms == count]
+            self.assertEqual(scores, sorted(scores, reverse=True))
+        self.assertGreater(results[0].score, 0)
 
     @unittest.skipUnless(RANKING_AVAILABLE, "src/ranking.py not added yet")
     def test_important_tag_page_outranks_same_tf_plain_page(self):
