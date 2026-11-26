@@ -1,0 +1,28 @@
+# Milestone 3 evaluation queries, one per line.
+# Blank lines and lines starting with # are ignored.
+# Source: Person A's QUERY_NOTES.txt (candidates; good/poor not verified yet).
+# Replace or reorder queries here; keep the same file for before/after runs.
+
+# Group 1 - candidate controls
+cristina lopes
+alexander ihler
+michael goodrich
+padhraic smyth
+david eppstein
+richard lathrop
+rina dechter
+informatics 121
+ICS 33
+computational vision
+
+# Group 2 - candidate difficult queries
+machine learning
+ACM
+master of software engineering
+software engineering
+artificial intelligence
+information retrieval
+computer security
+data mining
+graduate admissions
+undergraduate research
