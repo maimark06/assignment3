@@ -1,11 +1,16 @@
 """Checks for the in-memory inverted index and its partial-file flush."""
 
+from contextlib import redirect_stdout
+from io import StringIO
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from src.corpus import Document
+from src.corpus import MAX_FILE_BYTES, Document
+from src.index_io import IndexReader, load_doc_lengths, load_doc_urls
 from src.indexer import Indexer
+from src.main import run_build
 from src.posting import Posting, format_line, parse_line
 
 
@@ -266,3 +271,31 @@ class PartialFlushTests(unittest.TestCase):
     def test_posting_budget_must_be_at_least_one(self):
         with self.assertRaises(ValueError):
             Indexer("unused-output", flush_postings=0)
+
+
+class OversizedFileBuildTests(unittest.TestCase):
+    def test_build_never_assigns_an_id_to_an_oversized_file(self):
+        """A file over the byte limit is absent, and later pages keep consecutive ids."""
+        pages = [
+            {"url": "https://example.com/a", "content": "<p>small cat</p>"},
+            {"url": "https://example.com/b", "content": "giant " * (MAX_FILE_BYTES // 6 + 1)},
+            {"url": "https://example.com/c", "content": "<p>small dog</p>"},
+        ]
+        with TemporaryDirectory() as directory:
+            data = Path(directory) / "data"
+            out = Path(directory) / "index"
+            data.mkdir()
+            for number, page in enumerate(pages):
+                (data / f"{number}.json").write_text(json.dumps(page), encoding="utf-8")
+
+            with self.assertLogs("src.corpus", level="WARNING"), redirect_stdout(StringIO()):
+                run_build(str(data), str(out), flush_every=1)
+
+            self.assertEqual(
+                load_doc_urls(out),
+                ["https://example.com/a", "https://example.com/c"],
+            )
+            self.assertEqual(load_doc_lengths(out), [2, 2])
+            with IndexReader(out) as reader:
+                self.assertNotIn("giant", reader)
+                self.assertEqual([p.doc_id for p in reader.lookup("small")], [0, 1])
