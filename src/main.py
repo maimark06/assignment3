@@ -23,7 +23,7 @@ import sys
 import time
 
 from .corpus import iter_documents
-from .indexer import Indexer, is_oversized
+from .indexer import Indexer
 from .parser import extract_tokens
 from .stats import compute_stats, format_stats
 
@@ -76,18 +76,10 @@ def run_build(data_dir, out_dir, flush_every):
     indexer = Indexer(out_dir, flush_every=flush_every)
     indexed = 0
     skipped = 0
-    oversized = 0
 
     # Pass 1: tokenize every page; the indexer flushes partial files on its own
     # every flush_every documents.
     for doc in iter_documents(data_dir):
-        if is_oversized(doc):
-            # Not parsed, but kept with no postings: search needs consecutive ids.
-            oversized += 1
-            log.warning("Skipped oversized doc %d (%s): %d characters",
-                        doc.doc_id, doc.url, len(doc.html))
-            indexer.add_document(doc, {})
-            continue
         try:
             tokens = extract_tokens(doc.html)
         except Exception as error:
@@ -123,7 +115,6 @@ def run_build(data_dir, out_dir, flush_every):
     print()
     print(f"Documents indexed:      {indexed:,}")
     print(f"Documents skipped:      {skipped:,} (parse errors; see warnings above)")
-    print(f"Oversized pages:        {oversized:,} (not parsed; kept with no postings)")
     print(
         f"Partial index files:    {len(partials)} "
         f"(flush every {flush_every:,} docs or {indexer.flush_postings:,} postings)"
