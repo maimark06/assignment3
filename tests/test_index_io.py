@@ -130,6 +130,93 @@ class IndexReaderTests(unittest.TestCase):
                     reader.lookup("cat")
 
 
+class SparseOffsetTests(unittest.TestCase):
+    """M3: the reader keeps only every Nth term of offsets.tsv in memory."""
+
+    # 250 terms: "t000", "t002", ... (even numbers only), so odd numbers like
+    # "t001" sort between two stored terms but are not in the index.
+    TERMS = [f"t{number:03d}" for number in range(0, 500, 2)]
+
+    def write_many(self, index_dir: Path) -> None:
+        with IndexWriter(index_dir) as writer:
+            for number, term in enumerate(self.TERMS):
+                # Different list lengths, so posting sizes differ per term.
+                writer.write(term, [Posting(d, 1, 0) for d in range(number % 7 + 1)])
+
+    def full_sizes(self, index_dir: Path) -> dict[str, int]:
+        """Expected line length of every term, from the full offset table."""
+        offsets = load_offsets(index_dir)
+        starts = sorted(offsets.values()) + [(index_dir / INDEX_FILE).stat().st_size]
+        return {term: starts[starts.index(o) + 1] - o for term, o in offsets.items()}
+
+    def test_every_block_size_gives_the_same_answers(self):
+        """Terms at block starts, block ends and the last row all work."""
+        with TemporaryDirectory() as tmp:
+            index_dir = Path(tmp)
+            self.write_many(index_dir)
+            sizes = self.full_sizes(index_dir)
+            for every in [1, 2, 3, 7, 100, 249, 250, 1000]:
+                with IndexReader(index_dir, every=every) as reader:
+                    self.assertEqual(len(reader), len(self.TERMS), every)
+                    for number, term in enumerate(self.TERMS):
+                        self.assertIn(term, reader)
+                        self.assertEqual(reader.posting_size(term), sizes[term])
+                        self.assertEqual(len(reader.lookup(term)), number % 7 + 1)
+
+    def test_absent_terms_before_between_and_after(self):
+        with TemporaryDirectory() as tmp:
+            index_dir = Path(tmp)
+            self.write_many(index_dir)
+            absent = ["", "a", "t001", "t099", "t100x", "t497", "t499", "zzz"]
+            for every in [1, 3, 100]:
+                with IndexReader(index_dir, every=every) as reader:
+                    for term in absent:
+                        self.assertNotIn(term, reader)
+                        self.assertEqual(reader.lookup(term), [], (every, term))
+                        self.assertEqual(reader.posting_size(term), 0)
+
+    def test_only_one_term_per_block_is_kept_in_memory(self):
+        with TemporaryDirectory() as tmp:
+            index_dir = Path(tmp)
+            self.write_many(index_dir)
+            with IndexReader(index_dir, every=100) as reader:
+                self.assertEqual(reader._block_terms, ["t000", "t200", "t400"])
+                self.assertFalse(hasattr(reader, "offsets"))
+
+    def test_non_ascii_terms_use_byte_positions(self):
+        """Seeking needs byte positions, which differ from character counts."""
+        with TemporaryDirectory() as tmp:
+            write_sample(Path(tmp))
+            for every in [1, 2, 3]:
+                with IndexReader(tmp, every=every) as reader:
+                    for term, expected in SAMPLE.items():
+                        self.assertEqual(reader.lookup(term), expected, (every, term))
+
+    def test_unsorted_or_broken_offset_table_is_rejected(self):
+        bad_tables = ["b\t0\na\t10\n", "a\t0\na\t10\n", "a 0\n", "a\tx\n"]
+        for text in bad_tables:
+            with TemporaryDirectory() as tmp:
+                write_sample(Path(tmp))
+                (Path(tmp) / OFFSETS_FILE).write_text(text, encoding="utf-8")
+                with self.assertRaises(ValueError, msg=text):
+                    IndexReader(tmp)
+
+    def test_empty_index_has_no_terms(self):
+        with TemporaryDirectory() as tmp:
+            with IndexWriter(tmp):
+                pass
+            with IndexReader(tmp) as reader:
+                self.assertEqual(len(reader), 0)
+                self.assertNotIn("a", reader)
+                self.assertEqual(reader.lookup("a"), [])
+
+    def test_every_must_be_positive(self):
+        with TemporaryDirectory() as tmp:
+            write_sample(Path(tmp))
+            with self.assertRaises(ValueError):
+                IndexReader(tmp, every=0)
+
+
 class SearchSupportTests(unittest.TestCase):
     """Milestone 2 additions: posting_size, doc_count, load_doc_urls."""
 

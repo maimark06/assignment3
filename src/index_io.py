@@ -11,9 +11,17 @@ On-disk layout inside an index directory:
                  doc_id<TAB>token count of that page (written by the indexer;
                  used for length damping in ranking)
 
-Search must not load the whole index into memory (developer-option rule).
-Only the offset table is kept in memory; each lookup seeks to one line of
-index.txt and parses just that posting list.
+Search must not load the whole index into memory (developer-option rule),
+and since M3 its memory must stay below the index size. The full offset
+table (about a million terms) is itself larger than the index once loaded
+into a Python dict, so IndexReader keeps only a sparse table: every
+SPARSE_EVERY-th term of offsets.tsv with that row's byte position in
+offsets.tsv. A lookup then
+
+    1. binary-searches the sparse table for the block the term falls in,
+    2. seeks into offsets.tsv and reads at most SPARSE_EVERY short rows
+       to find the term's byte offset in index.txt,
+    3. seeks into index.txt and parses just that one posting list.
 """
 
 from bisect import bisect_right
@@ -28,6 +36,11 @@ INDEX_FILE = "index.txt"
 OFFSETS_FILE = "offsets.tsv"
 DOC_IDS_FILE = "doc_ids.tsv"
 DOC_LENGTHS_FILE = "doc_lengths.tsv"
+
+# IndexReader keeps one of every SPARSE_EVERY terms in memory. 100 keeps
+# about 10.7k entries for 1.07M terms, and a lookup scans at most 100 rows
+# of offsets.tsv (roughly 1.5 KB), which takes well under a millisecond.
+SPARSE_EVERY = 100
 
 PathLike = Union[str, Path]
 
@@ -125,10 +138,10 @@ def write_offsets(index_dir: PathLike, offsets: list[tuple[str, int]]) -> None:
 
 
 def load_offsets(index_dir: PathLike) -> dict[str, int]:
-    """Load the term-offset table into a dict (term -> byte offset).
+    """Load the whole term-offset table into a dict (term -> byte offset).
 
-    This is the only part of the index held in memory during search. It has
-    one small entry per term, which is far smaller than the posting lists.
+    For tests and debugging only. On the full corpus this dict is larger
+    than the index itself, so search uses IndexReader's sparse table.
     """
     offsets: dict[str, int] = {}
     path = Path(index_dir) / OFFSETS_FILE
@@ -213,32 +226,92 @@ def load_doc_lengths(index_dir: PathLike) -> list[int]:
 
 
 class IndexReader:
-    """Look up posting lists by seeking into index.txt.
+    """Look up posting lists by seeking into offsets.tsv and index.txt.
 
-    Keeps the offset table in memory and one open file handle, so repeated
-    queries (M2/M3) do not reopen the file or reload the table:
+    Keeps a sparse offset table in memory and both files open, so repeated
+    queries do not reopen files or reload the table:
 
         with IndexReader("index/") as reader:
             postings = reader.lookup("comput")
 
     Attributes:
-        offsets    term -> byte offset of its line in index.txt
         doc_count  number of documents (N for idf), from doc_ids.tsv
     """
 
-    def __init__(self, index_dir: PathLike) -> None:
+    def __init__(self, index_dir: PathLike, every: int = SPARSE_EVERY) -> None:
+        if every < 1:
+            raise ValueError("every must be at least 1")
         self.index_dir = Path(index_dir)
-        self.offsets = load_offsets(self.index_dir)
         self.doc_count = count_documents(self.index_dir)
-
-        # All line start positions in increasing order. A term's line ends
-        # where the next line starts, so posting_size can find that next
-        # start with a binary search. The ints are shared with self.offsets,
-        # so this list only adds one pointer per term.
-        self._sorted_offsets = sorted(self.offsets.values())
+        self._every = every
         self._index_size = (self.index_dir / INDEX_FILE).stat().st_size
 
+        # Sparse table: _block_terms[i] is the first term of block i (rows
+        # i*every .. i*every+every-1 of offsets.tsv) and _block_positions[i]
+        # is the byte position of that row in offsets.tsv.
+        self._block_terms: list[str] = []
+        self._block_positions: list[int] = []
+        self._term_count = self._load_sparse_table()
+
+        self._offsets_file = open(self.index_dir / OFFSETS_FILE, "rb")
         self._file = open(self.index_dir / INDEX_FILE, "rb")
+
+    def _load_sparse_table(self) -> int:
+        """Read offsets.tsv once, keep every Nth term; return the term count.
+
+        Streams the file line by line, so the full table is never in memory.
+        Also checks that terms are strictly increasing, because the binary
+        search over blocks depends on that order.
+        """
+        path = self.index_dir / OFFSETS_FILE
+        position = 0  # byte position of the current row in offsets.tsv
+        previous: Optional[str] = None
+        count = 0
+        with open(path, "rb") as f:
+            for raw in f:
+                term, offset = _parse_offset_row(raw, path, count + 1)
+                if previous is not None and term <= previous:
+                    raise ValueError(
+                        f"{path} row {count + 1}: terms must be strictly "
+                        f"increasing ({term!r} after {previous!r})"
+                    )
+                if count % self._every == 0:
+                    self._block_terms.append(term)
+                    self._block_positions.append(position)
+                previous = term
+                position += len(raw)
+                count += 1
+        return count
+
+    def _locate(self, term: str) -> Optional[tuple[int, int]]:
+        """Return (start, end) byte range of term's line in index.txt, or None.
+
+        Finds the block with a binary search in memory, then reads at most
+        `every` rows of offsets.tsv, plus one more row for the end offset.
+        """
+        block = bisect_right(self._block_terms, term) - 1
+        if block < 0:
+            return None  # sorts before the first term in the index
+        f = self._offsets_file
+        f.seek(self._block_positions[block])
+        row = (block * self._every) + 1  # row number, for error messages
+        for _ in range(self._every):
+            raw = f.readline()
+            if not raw:
+                return None  # end of file
+            found, start = _parse_offset_row(raw, f.name, row)
+            if found == term:
+                # The line ends where the next term's line starts.
+                next_raw = f.readline()
+                if next_raw:
+                    end = _parse_offset_row(next_raw, f.name, row + 1)[1]
+                else:
+                    end = self._index_size  # last line ends at end of file
+                return start, end
+            if found > term:
+                return None  # passed where the term would be
+            row += 1
+        return None  # not in this block, and the next block starts after it
 
     def posting_size(self, term: str) -> int:
         """Byte length of term's line in index.txt, or 0 if term is absent.
@@ -246,16 +319,11 @@ class IndexReader:
         A longer line means a longer posting list, so this orders query terms
         shortest-first without reading or parsing any postings.
         """
-        offset = self.offsets.get(term)
-        if offset is None:
+        location = self._locate(term)
+        if location is None:
             return 0
-        # Index of the first line start that is after this one.
-        position = bisect_right(self._sorted_offsets, offset)
-        if position < len(self._sorted_offsets):
-            next_offset = self._sorted_offsets[position]
-        else:
-            next_offset = self._index_size  # last line ends at end of file
-        return next_offset - offset
+        start, end = location
+        return end - start
 
     def lookup(self, term: str) -> list[Posting]:
         """Return the postings for an already-stemmed term, or [] if absent.
@@ -263,9 +331,10 @@ class IndexReader:
         The caller must normalize the term with the same tokenizer and
         stemmer used at index time.
         """
-        offset = self.offsets.get(term)
-        if offset is None:
+        location = self._locate(term)
+        if location is None:
             return []
+        offset = location[0]
         self._file.seek(offset)
         line = self._file.readline().decode("utf-8")
         found_term, postings = parse_line(line)
@@ -283,13 +352,14 @@ class IndexReader:
         return len(self.lookup(term))
 
     def __contains__(self, term: str) -> bool:
-        return term in self.offsets
+        return self._locate(term) is not None
 
     def __len__(self) -> int:
         """Number of unique terms in the index."""
-        return len(self.offsets)
+        return self._term_count
 
     def close(self) -> None:
+        self._offsets_file.close()
         self._file.close()
 
     def __enter__(self) -> "IndexReader":
@@ -297,6 +367,14 @@ class IndexReader:
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
+
+
+def _parse_offset_row(raw: bytes, path, row: int) -> tuple[str, int]:
+    """Split one offsets.tsv row (bytes) into (term, offset in index.txt)."""
+    term, separator, offset = raw.decode("utf-8").rstrip("\n").partition("\t")
+    if not separator or not term or not offset.isdigit():
+        raise ValueError(f"Bad row {row} in {path}: {raw!r}")
+    return term, int(offset)
 
 
 def lookup(term: str, index_dir: PathLike) -> list[Posting]:
