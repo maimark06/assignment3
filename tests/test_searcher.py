@@ -13,7 +13,7 @@ import unittest
 from unittest.mock import patch
 
 from src.corpus import iter_documents
-from src.index_io import DOC_IDS_FILE
+from src.index_io import DOC_IDS_FILE, DOC_LENGTHS_FILE, load_doc_lengths
 from src.indexer import Indexer
 from src.merge import merge_partials
 from src.parser import extract_tokens
@@ -41,11 +41,24 @@ PAGES = [
 RANKING_AVAILABLE = importlib.util.find_spec("src.ranking") is not None
 
 
-def build_index(data_dir: Path, index_dir: Path) -> None:
-    """Write PAGES as JSON files and run the real indexing pipeline on them."""
+# Pages for length damping: same tf and imp for the query terms, very
+# different page length. Kept apart from PAGES so the counts above stay fixed.
+LENGTH_PAGES = [
+    # 0: long page (the terms plus 200 filler words). Smaller doc_id, so it
+    #    would win a tie; it must lose because it is longer.
+    ("https://b.edu/long", "<p>machine learning " + "filler " * 200 + "</p>"),
+    # 1: short page with the same counts for "machine" and "learning".
+    ("https://b.edu/short", "<p>machine learning notes</p>"),
+    # 2: neither term, so idf is not zero.
+    ("https://b.edu/other", "<p>unrelated page</p>"),
+]
+
+
+def build_index(data_dir: Path, index_dir: Path, pages=PAGES) -> None:
+    """Write pages as JSON files and run the real indexing pipeline on them."""
     domain = data_dir / "a.edu"
     domain.mkdir(parents=True)
-    for number, (url, html) in enumerate(PAGES):
+    for number, (url, html) in enumerate(pages):
         page = {"url": url, "content": html, "encoding": "utf-8"}
         (domain / f"{number:02d}.json").write_text(json.dumps(page), encoding="utf-8")
 
@@ -186,6 +199,53 @@ class SearcherOpenTests(unittest.TestCase):
             (root / "index" / DOC_IDS_FILE).write_text("", encoding="utf-8")
             with self.assertRaises(ValueError):
                 Searcher(root / "index")
+
+    def test_lengths_must_cover_every_document(self):
+        """An old or broken doc_lengths.tsv would give pages the wrong length."""
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            build_index(root / "data", root / "index")
+            (root / "index" / DOC_LENGTHS_FILE).write_text("0\t5\n", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                Searcher(root / "index")
+
+    def test_missing_lengths_file_is_rejected(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            build_index(root / "data", root / "index")
+            (root / "index" / DOC_LENGTHS_FILE).unlink()
+            with self.assertRaises(FileNotFoundError):
+                Searcher(root / "index")
+
+
+class LengthDampingTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = TemporaryDirectory()
+        root = Path(cls._tmp.name)
+        cls.index_dir = root / "index"
+        build_index(root / "data", cls.index_dir, pages=LENGTH_PAGES)
+        cls.searcher = Searcher(cls.index_dir)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.searcher.close()
+        cls._tmp.cleanup()
+
+    def test_lengths_and_average_come_from_doc_lengths_file(self):
+        lengths = load_doc_lengths(self.index_dir)
+        self.assertEqual(self.searcher.lengths, lengths)
+        self.assertGreater(lengths[0], lengths[1])  # long page really is longer
+        self.assertAlmostEqual(self.searcher.avg_length, sum(lengths) / len(lengths))
+
+    def test_short_page_outranks_long_page_with_same_tf(self):
+        results, total = self.searcher.search("machine learning", k=10)
+        self.assertEqual(total, 2)
+        self.assertEqual(
+            [result.url for result in results],
+            ["https://b.edu/short", "https://b.edu/long"],
+        )
+        self.assertGreater(results[0].score, results[1].score)
 
 
 if __name__ == "__main__":

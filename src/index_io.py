@@ -7,6 +7,9 @@ On-disk layout inside an index directory:
                  (line encoding is defined by posting.format_line/parse_line)
     offsets.tsv  term<TAB>byte offset of that term's line in index.txt
     doc_ids.tsv  doc_id<TAB>url (written by the indexer, not by this module)
+    doc_lengths.tsv
+                 doc_id<TAB>token count of that page (written by the indexer;
+                 used for length damping in ranking)
 
 Search must not load the whole index into memory (developer-option rule).
 Only the offset table is kept in memory; each lookup seeks to one line of
@@ -24,6 +27,7 @@ from .posting import Posting, format_line, parse_line
 INDEX_FILE = "index.txt"
 OFFSETS_FILE = "offsets.tsv"
 DOC_IDS_FILE = "doc_ids.tsv"
+DOC_LENGTHS_FILE = "doc_lengths.tsv"
 
 PathLike = Union[str, Path]
 
@@ -179,6 +183,33 @@ def load_doc_urls(index_dir: PathLike) -> list[str]:
                 )
             urls.append(url)
     return urls
+
+
+def load_doc_lengths(index_dir: PathLike) -> list[int]:
+    """Load doc_lengths.tsv as a list where position i holds doc_id i's length.
+
+    The length is the page's raw token count (stop words included). Like the
+    URL list this is one small entry per page (about 54k ints), so it is
+    allowed in memory during search. Raises ValueError if the ids are not
+    consecutive from 0 or a length is not a non-negative whole number.
+    """
+    lengths: list[int] = []
+    path = Path(index_dir) / DOC_LENGTHS_FILE
+    with open(path, encoding="utf-8") as f:
+        for line_number, line in enumerate(f, start=1):
+            line = line.rstrip("\n")
+            if not line.strip():
+                continue
+            doc_id, separator, length = line.partition("\t")
+            if not separator or not doc_id.isdigit() or not length.isdigit():
+                raise ValueError(f"Bad line {line_number} in {path}: {line!r}")
+            if int(doc_id) != len(lengths):
+                raise ValueError(
+                    f"{path} line {line_number}: expected doc_id {len(lengths)}, "
+                    f"found {doc_id}"
+                )
+            lengths.append(int(length))
+    return lengths
 
 
 class IndexReader:

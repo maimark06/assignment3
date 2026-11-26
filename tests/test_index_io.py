@@ -6,10 +6,12 @@ import unittest
 
 from src.index_io import (
     DOC_IDS_FILE,
+    DOC_LENGTHS_FILE,
     INDEX_FILE,
     OFFSETS_FILE,
     IndexReader,
     IndexWriter,
+    load_doc_lengths,
     load_doc_urls,
     load_offsets,
     lookup,
@@ -178,6 +180,34 @@ class SearchSupportTests(unittest.TestCase):
                 (Path(tmp) / DOC_IDS_FILE).write_text(text, encoding="utf-8")
                 with self.assertRaises(ValueError, msg=text):
                     load_doc_urls(tmp)
+
+    def test_load_doc_lengths_puts_each_length_at_its_doc_id(self):
+        """Blank lines are skipped and a page with no tokens has length 0."""
+        with TemporaryDirectory() as tmp:
+            (Path(tmp) / DOC_LENGTHS_FILE).write_text(
+                "0\t120\n1\t0\n\n2\t7\n", encoding="utf-8"
+            )
+            self.assertEqual(load_doc_lengths(tmp), [120, 0, 7])
+
+    def test_load_doc_lengths_rejects_gaps_and_bad_lines(self):
+        bad_files = [
+            "0\t10\n2\t30\n",  # gap: doc_id 1 missing
+            "1\t10\n",  # does not start at 0
+            "0 10\n",  # no tab
+            "0\t-5\n",  # negative length
+            "0\tten\n",  # not a number
+            "0\t\n",  # empty length
+        ]
+        for text in bad_files:
+            with TemporaryDirectory() as tmp:
+                (Path(tmp) / DOC_LENGTHS_FILE).write_text(text, encoding="utf-8")
+                with self.assertRaises(ValueError, msg=text):
+                    load_doc_lengths(tmp)
+
+    def test_load_doc_lengths_needs_the_file(self):
+        with TemporaryDirectory() as tmp:
+            with self.assertRaises(FileNotFoundError):
+                load_doc_lengths(tmp)
 
 
 if __name__ == "__main__":
