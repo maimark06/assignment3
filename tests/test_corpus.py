@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from src.corpus import iter_documents
+from src.corpus import MAX_FILE_BYTES, iter_documents
 
 
 class IterDocumentsTests(unittest.TestCase):
@@ -137,3 +137,68 @@ class IterDocumentsTests(unittest.TestCase):
         self.assertTrue(
             any("1.json" in record.getMessage() for record in logs.records)
         )
+
+    def test_oversized_file_is_skipped_logged_and_counted(self):
+        """A file over the default limit is skipped and does not take a doc_id."""
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "0.json").write_text(
+                json.dumps(
+                    {
+                        "url": "https://example.com/dump",
+                        "content": "x" * (MAX_FILE_BYTES + 1),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (root / "1.json").write_text(
+                json.dumps({"url": "https://example.com/small", "content": "small"}),
+                encoding="utf-8",
+            )
+
+            with self.assertLogs("src.corpus", level="INFO") as logs:
+                documents = list(iter_documents(directory))
+
+        self.assertEqual(
+            [(doc.doc_id, doc.url, doc.html) for doc in documents],
+            [(0, "https://example.com/small", "small")],
+        )
+        self.assertTrue(
+            any(
+                record.levelname == "WARNING" and "0.json" in record.getMessage()
+                for record in logs.records
+            )
+        )
+        summary = logs.records[-1].getMessage()
+        self.assertIn("0 invalid files skipped", summary)
+        self.assertIn("1 oversized files skipped", summary)
+
+    def test_oversized_file_is_not_parsed(self):
+        """Size is checked before reading, so broken JSON over the limit is not an error."""
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "0.json").write_text('{"url": "broken', encoding="utf-8")
+
+            with self.assertLogs("src.corpus", level="INFO") as logs:
+                documents = list(iter_documents(directory, max_bytes=5))
+
+        self.assertEqual(documents, [])
+        summary = logs.records[-1].getMessage()
+        self.assertIn("0 invalid files skipped", summary)
+        self.assertIn("1 oversized files skipped", summary)
+
+    def test_file_exactly_at_the_limit_is_kept(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "0.json"
+            path.write_text(
+                json.dumps({"url": "https://example.com/edge", "content": "edge"}),
+                encoding="utf-8",
+            )
+            size = path.stat().st_size
+
+            kept = list(iter_documents(directory, max_bytes=size))
+            with self.assertLogs("src.corpus", level="WARNING"):
+                dropped = list(iter_documents(directory, max_bytes=size - 1))
+
+        self.assertEqual([doc.url for doc in kept], ["https://example.com/edge"])
+        self.assertEqual(dropped, [])

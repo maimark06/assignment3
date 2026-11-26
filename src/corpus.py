@@ -10,6 +10,10 @@ from urllib.parse import urldefrag
 
 logger = logging.getLogger(__name__)
 
+# Data dumps above this size (maven-contents.txt is 85 MB) cost more RAM to
+# parse than the whole index uses, and they are not useful search results.
+MAX_FILE_BYTES = 5 * 1024 * 1024
+
 
 @dataclass
 class Document:
@@ -18,13 +22,17 @@ class Document:
     html: str
 
 
-def iter_documents(data_dir: str) -> Iterator[Document]:
+def iter_documents(
+    data_dir: str, max_bytes: int = MAX_FILE_BYTES
+) -> Iterator[Document]:
     """Yield valid pages with consecutive IDs; log and count invalid files.
 
     JSON files are UTF-8 (an optional BOM is accepted). Their content field
     is already Unicode after JSON decoding: the page's encoding metadata
     must not be used to decode that string a second time. Fragment variants
     of a URL are treated as one document, keeping the first valid page.
+    Files larger than max_bytes are skipped before they are opened, so they
+    never receive a doc_id.
     """
     root = Path(data_dir)
     if not root.is_dir():
@@ -33,11 +41,20 @@ def iter_documents(data_dir: str) -> Iterator[Document]:
     seen_urls: set[str] = set()
     doc_id = 0
     skipped = 0
+    oversized = 0
     duplicates = 0
 
     # Sort paths so IDs are reproducible across runs with the same corpus.
     for path in sorted(root.rglob("*.json")):
         try:
+            size = path.stat().st_size
+            if size > max_bytes:
+                oversized += 1
+                logger.warning(
+                    "Skipping %s: %d bytes is over the %d-byte limit",
+                    path, size, max_bytes,
+                )
+                continue
             with path.open(encoding="utf-8-sig") as source:
                 page = json.load(source)
             if not isinstance(page, dict):
@@ -65,6 +82,6 @@ def iter_documents(data_dir: str) -> Iterator[Document]:
 
     logger.info(
         "Corpus complete: %d documents, %d invalid files skipped, "
-        "%d duplicate URLs skipped",
-        doc_id, skipped, duplicates,
+        "%d oversized files skipped, %d duplicate URLs skipped",
+        doc_id, skipped, oversized, duplicates,
     )
