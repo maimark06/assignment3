@@ -10,6 +10,15 @@ from .posting import Posting, format_line
 # apply through flush_every.
 DEFAULT_FLUSH_POSTINGS = 500_000
 
+# Pages longer than this are data dumps (maven-contents.txt has 85M
+# characters). Parsing one takes more RAM than the whole index on disk.
+MAX_PAGE_CHARS = 5 * 1024 * 1024
+
+
+def is_oversized(doc: Document, max_chars: int = MAX_PAGE_CHARS) -> bool:
+    """Return True if the page is too long to parse and index."""
+    return len(doc.html) > max_chars
+
 
 class Indexer:
     """Map each term to the documents that contain it.

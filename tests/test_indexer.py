@@ -1,11 +1,16 @@
 """Checks for the in-memory inverted index and its partial-file flush."""
 
+from contextlib import redirect_stdout
+from io import StringIO
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
 from src.corpus import Document
-from src.indexer import Indexer
+from src.index_io import IndexReader, load_doc_lengths, load_doc_urls
+from src.indexer import MAX_PAGE_CHARS, Indexer, is_oversized
+from src.main import run_build
 from src.posting import Posting, format_line, parse_line
 
 
@@ -266,3 +271,49 @@ class PartialFlushTests(unittest.TestCase):
     def test_posting_budget_must_be_at_least_one(self):
         with self.assertRaises(ValueError):
             Indexer("unused-output", flush_postings=0)
+
+
+class OversizedPageTests(unittest.TestCase):
+    def test_page_over_the_limit_is_oversized(self):
+        doc = Document(0, "https://example.com/dump", "x" * 11)
+        self.assertTrue(is_oversized(doc, max_chars=10))
+
+    def test_page_exactly_at_the_limit_is_kept(self):
+        doc = Document(0, "https://example.com/edge", "x" * 10)
+        self.assertFalse(is_oversized(doc, max_chars=10))
+
+    def test_default_limit_is_five_mebi_characters(self):
+        self.assertEqual(MAX_PAGE_CHARS, 5 * 1024 * 1024)
+        self.assertTrue(
+            is_oversized(Document(0, "https://example.com/dump", "x" * (MAX_PAGE_CHARS + 1)))
+        )
+
+    def test_build_keeps_the_oversized_doc_id_without_postings(self):
+        """Search requires consecutive ids, so a skipped page keeps its row."""
+        pages = [
+            {"url": "https://example.com/a", "content": "<p>small cat</p>"},
+            {"url": "https://example.com/b", "content": "giant " * (MAX_PAGE_CHARS // 6 + 1)},
+            {"url": "https://example.com/c", "content": "<p>small dog</p>"},
+        ]
+        with TemporaryDirectory() as directory:
+            data = Path(directory) / "data"
+            out = Path(directory) / "index"
+            data.mkdir()
+            for number, page in enumerate(pages):
+                (data / f"{number}.json").write_text(json.dumps(page), encoding="utf-8")
+
+            output = StringIO()
+            with redirect_stdout(output), self.assertLogs("main", level="WARNING") as logs:
+                run_build(str(data), str(out), flush_every=1)
+
+            self.assertEqual(
+                load_doc_urls(out),
+                ["https://example.com/a", "https://example.com/b", "https://example.com/c"],
+            )
+            self.assertEqual(load_doc_lengths(out), [2, 0, 2])
+            with IndexReader(out) as reader:
+                self.assertNotIn("giant", reader)
+                self.assertEqual([p.doc_id for p in reader.lookup("small")], [0, 2])
+
+        self.assertIn("Oversized pages:        1", output.getvalue())
+        self.assertTrue(any("example.com/b" in message for message in logs.output))
