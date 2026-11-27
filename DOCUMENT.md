@@ -2,6 +2,107 @@
 
 ## Milestone 3 — Person A: Query Evaluation and Parser Ownership
 
+### November 26 scope clarification and Person C handoff draft
+
+The required M3 deliverables remain code, plain-text README.txt and TEST.txt,
+and the in-person demo. The evaluation output is an internal working reference,
+not an additional submission report. Added `/eval/` to .gitignore after confirming
+no files in that folder were tracked. Both existing evaluation files stay local;
+they are not included in the suggested commit. index/ remains ignored too.
+If Person C packages by filesystem rather than Git, exclude eval/ from the zip.
+
+Updated QUERY_NOTES.txt with a concise ten-query problem list for C's TEST.txt
+comments. Each issue refers to observed ordering in engine e16b740's reference
+run and an explicit search intent, such as a faculty profile, course page, or
+admissions instructions. Examples include Git metadata above Eppstein's profile,
+lab schedules for ICS 33, and a handbook/site map above admissions pages.
+The list avoids treating the ambiguous ACM query as automatically wrong.
+
+These comments are a handoff draft. They do not establish that all ten pages
+were inspected, that fixes have succeeded, or that ten good controls have been
+confirmed. Existing rankings support an ordering concern, not a claim that every
+returned page is unrelated. Similar URL variants alone do not prove duplicate
+content. The final good/poor query grouping still requires review, and any later
+improvement claim needs the same queries run after the change.
+
+The handoff instructions distinguish implemented mechanisms (length damping,
+sparse offsets, partial fill-in) from measured improvements. Since those mechanisms
+already existed during this run, the notes cannot attribute before/after gains
+to them without older evidence. The optional title field remains deferred.
+Person C owns final TEST.txt formatting; no separate report or replacement
+evaluator was introduced. The notes are ready to share, but no message was sent
+and receipt by C has not been confirmed.
+
+Person A checklist at this point:
+
+- 20 candidates have been run; ten ordering concerns are drafted. A verified
+  good/poor evaluation split and before/after conclusions are not complete.
+- Title work is explicitly deferred in writing: complete.
+- Notes for TEST.txt are prepared; delivery to C remains to be confirmed.
+
+Validation: checked the draft against saved query output, confirmed eval/ was
+untracked before ignoring it, and ran git diff --check. No application function,
+test, index file, or teammate-owned module changed in this step.
+
+### Latest step: Run the 20 queries on the uploaded index
+
+Completed November 25, 2026 using engine commit `e16b740`. Earlier readiness
+and demo sections below are historical: the index is now available, and the
+current Searcher has real-length loading and partial-match fill-in.
+
+Files:
+
+- `eval/current-m3-2026-11-25.txt`: unedited output from Person C's existing
+  evaluation helper, including all 20 top-five lists, scores, AND counts, first
+  timings, and median timings from three runs per query.
+- `eval/current-m3-2026-11-25-provenance.json`: original index file sizes and
+  SHA-256 hashes, engine revision, recovered-length method, and scope limitations.
+- `QUERY_NOTES.txt`: measured-run summary and preliminary per-query relevance
+  observations to support Person C's eventual TEST.txt.
+
+The upload supplied index.txt, offsets.tsv, and doc_ids.tsv but omitted
+doc_lengths.tsv, which the current Searcher requires. Without altering those
+three files, a one-off streaming scan summed the stored tf values by doc_id and
+wrote index/doc_lengths.tsv. This exactly recovers lengths for the indexed
+token occurrences: imp is already part of tf and is not added again. The scan
+checked consecutive document IDs, posting ID ranges, positive tf, and
+`0 <= imp <= tf`. It found 53,792 documents, 60,147,577 token occurrences, and
+305 zero-length documents. The generated file remains ignored under index/.
+No production function, ranking constant, or index format was changed.
+
+This is not the team's planned full rebuild: it does not skip giant pages or
+establish build-memory compliance. The original index build revision is unknown.
+File hashes identify this upload for future comparisons. Current M3 scoring,
+sparse offsets, real recovered lengths, and fill-in were already active, so the
+run must not be called an original M2 baseline or evidence of improvement over M2.
+It can serve as a reference before future changes if the team agrees.
+
+Command used (inside the isolated dependency environment described earlier):
+
+```bash
+python -B -m scripts.evaluate --index index/ --queries scripts/queries.txt --top 5 --repeat 3 --label current-m3-uploaded-index-recovered-lengths --out eval/current-m3-2026-11-25.txt
+```
+
+Observed results:
+
+- The uploaded index contains 1,066,417 terms; index + offsets occupy 143.2 MiB.
+- All 20 queries returned at least five AND matches; these top-five lists did
+  not require partial fill-in. The displayed match count is AND-only.
+- Slowest median was 286.0 ms for master of software engineering. Mean median
+  was 64.6 ms; no first or median timing exceeded 300 ms in this run. This is
+  machine-specific evidence, not a guarantee or a memory measurement.
+- The report header's 21:48 is host UTC, equivalent to 13:48 PST. No code was
+  changed solely to rewrite the helper's timestamp formatting.
+- MSWE's first result is the program homepage. The old DVD.txt complaint does
+  not describe this run. Eppstein's top three are Git log files; ICS 33 returns
+  lab schedules; several person queries put indirect pages above profiles.
+
+Per-query quality labels are preliminary, based on URLs and intended topics,
+not inspected archived HTML. The initial candidate grouping is not a verified
+10-good/10-poor split. Next: review contents or discuss intended relevance with
+the team, confirm poor-query reasons, select further controls if needed, and
+share the evidence with C. No before/after improvement claim is complete yet.
+
 Updated November 25, 2026. Person A owns query evaluation notes, parser tests,
 the optional title signal, and any needed query/console adjustments. Ranking
 math and index access remain with Persons B and C.

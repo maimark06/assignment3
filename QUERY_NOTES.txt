@@ -2,8 +2,9 @@ Milestone 3 - Person A query evaluation notes
 Prepared: November 25, 2026
 
 STATUS
-These are 20 candidate queries, not measured results. The local index is not
-available. No query has yet been verified as good or poor on the full corpus.
+The 20 candidates were run on November 25, 2026 against the uploaded full index
+using engine e16b740. See the measured-run section below and the saved report.
+Initial candidate grouping below is historical, not a measured classification.
 The first group proposes controls; the second proposes difficult queries.
 Reclassify or replace queries after running them so at least half of the final
 evaluation queries are documented as initially poor in relevance, runtime, or
@@ -147,3 +148,138 @@ The latest course notice says interviews are IN PERSON; it overrides the older
 online/video instructions. Every member must attend and explain the full
 pipeline, implementation choices, and effectiveness/runtime tradeoffs.
 Use the current Canvas deadline, not dates from older specification examples.
+
+MEASURED RUN - NOVEMBER 25, 2026
+Local-only reference: eval/current-m3-2026-11-25.txt
+Local-only file details: eval/current-m3-2026-11-25-provenance.json
+The eval/ folder is ignored. These files are not required submission reports.
+Engine: e16b740. Current M3 scoring, sparse offsets, and partial fill-in already
+exist. This is a reference run before FUTURE changes, not original M2 behavior.
+Index: 53,792 documents, 1,066,417 terms, 143.2 MiB for index + offsets.
+The uploaded index had no doc_lengths.tsv. Lengths were recovered exactly from
+sum(tf) per document, not guessed or set to 1. Original three files unchanged.
+This does not remove giant pages or replace the team's planned M3 rebuild.
+Original index build revision is unknown; SHA-256 fingerprints identify the files.
+Each query ran three times, returning up to five URLs. All 20 had at least five
+AND matches, so none of these top-five lists used partial fill-in.
+Slowest median: 286.0 ms for master of software engineering; mean median: 64.6 ms.
+No first-run or median exceeded 300 ms in this run. This is not a latency guarantee
+on other machines, and first-run timings do not prove cold operating-system caches.
+The report's 21:48 header uses host UTC, equivalent to 13:48 PST locally.
+
+PRELIMINARY RELEVANCE REVIEW
+These judgments use returned URLs and the intended page types above. They are
+not a review of archived page contents. Verify page contents before final claims
+in TEST.txt; do not assume that a URL alone proves a page is irrelevant.
+
+01. cristina lopes - candidate poor ordering
+    Top: https://www.ics.uci.edu/~hsajnani/
+    Her faculty profile is rank 3. For a person-homepage intent, another person's
+    homepage above the direct profile is a concrete ordering concern.
+02. alexander ihler - candidate poor ordering
+    Top: https://www.ics.uci.edu/~ihler/papers/bib.html
+    A bibliography is above his bio at rank 2 for the person-profile intent.
+03. michael goodrich - candidate poor ordering
+    Top: https://www.ics.uci.edu/~goodrich/erdos.html
+    Personal subpages and a book-related item fill the top five; inspect whether
+    a direct profile should rank ahead for the intended person lookup.
+04. padhraic smyth - candidate poor ordering
+    Top: https://www.ics.uci.edu/~duboisc/research.html
+    Another person's research page and old news appear instead of his profile.
+05. david eppstein - clearly suspicious non-content results
+    Top: https://www.ics.uci.edu/~eppstein/PADS/.git/logs/HEAD
+    Three Git log files occupy ranks 1-3; his profile is rank 5. Investigate
+    general handling of repository metadata rather than hard-coding this query.
+06. richard lathrop - candidate poor ordering / duplicates
+    Top: https://www.ics.uci.edu/~rickl/rickl-students.html
+    Students and karate pages are above the homepage. Homepage URL variants
+    occupy ranks 3-5; content equality is not established from URLs alone.
+07. rina dechter - candidate poor ordering
+    Top: https://www.ics.uci.edu/~dechter/publications.html
+    Publication lists, including another person's, displace a direct profile.
+08. informatics 121 - potentially acceptable control
+    A teaching overview is first and four specific course pages follow.
+    Check archived content and agree whether the course pages should be first.
+09. ICS 33 - candidate poor relevance
+    Top: https://www.ics.uci.edu/~lab/lab_schedule/schedules/192_files/sheet003.html
+    All five are lab schedule sheets rather than the intended course page.
+10. computational vision - potentially acceptable control
+    The returned URLs concern vision research, projects, and links.
+11. machine learning - potentially acceptable control
+    Classes and machine-learning workshops dominate the top five. The previously
+    reported maven dump is not first in this run; do not reuse that old complaint
+    as a current observation or attribute an improvement without an earlier run.
+12. ACM - intent-dependent candidate poor relevance
+    Publications and service pages dominate. Poor for a chapter-navigation intent,
+    but not necessarily wrong for the ambiguous acronym generally.
+13. master of software engineering - strong candidate control
+    Top: https://mswe.ics.uci.edu/
+    Program pages occupy the leading positions. DVD.txt is not in the top five.
+    Median 286.0 ms leaves little margin below the runtime target.
+14. software engineering - candidate poor ordering / duplicate URLs
+    Top: http://malek.ics.uci.edu/teaching.html
+    HTTP/HTTPS variants of a teaching page occupy ranks 1-2, followed by publication
+    pages. Inspect contents against the intended program/research overview intent.
+15. artificial intelligence - potentially acceptable control
+    AI-related course pages and AAAI news appear. Verify their topical content.
+16. information retrieval - relevant but possible diversity issue
+    Retrieval research URLs appear; three MARS variants occupy the first three
+    ranks. Check actual content before calling them duplicate pages.
+17. computer security - candidate poor ordering for overview intent
+    All five results are individual ICS 8 homework pages. Topic-related but
+    potentially less useful than a course/lab overview; verify the archived pages.
+18. data mining - potentially acceptable control
+    Data-mining topic and course pages appear among the top results.
+19. graduate admissions - candidate poor ordering
+    Top: https://mcs.ics.uci.edu/current-students/resources/gradhandbook/
+    A handbook and a site map precede direct admissions pages at ranks 3-4.
+20. undergraduate research - candidate poor relevance for opportunities intent
+    An award story, site map, alumni spotlight, and admissions page dominate.
+    Look for an actual research-opportunities page to confirm the mismatch.
+
+NEXT REVIEW
+The original proposed 10/10 split is not supported as written: several supposed
+controls now look weak and several supposed difficult queries look good. Confirm
+the relevance judgments, select additional measured controls if needed, and keep
+the final before/after query set fixed. Do not claim the 10-good/10-poor checklist
+is finished yet. These records can now be shared with C for TEST.txt preparation.
+
+PERSON A HANDOFF DRAFT FOR C - NOVEMBER 26, 2026
+Purpose: comments for the required TEST.txt, not a separate report. Use the
+existing 20 queries above and scripts/queries.txt. The following ten concerns
+were identified in the current reference run for the stated search intents.
+They are not claims about the original M2 version or proof of a completed fix.
+
+Query                       Observed concern / intended task
+cristina lopes               Another person's homepage precedes her faculty profile.
+alexander ihler              Bibliography precedes bio for a person-profile lookup.
+padhraic smyth               Another person's page precedes a direct faculty profile.
+david eppstein               Git metadata occupies the first three results.
+richard lathrop              Students/karate pages precede the homepage.
+rina dechter                Publication lists dominate a person-profile lookup.
+ICS 33                      Lab schedule sheets dominate a course-page lookup.
+software engineering        Teaching/publication pages dominate an overview lookup;
+                            HTTP/HTTPS variants also reduce visible variety.
+graduate admissions         Handbook/site map precede direct admissions pages.
+undergraduate research      News/site map/admissions pages dominate an opportunities lookup.
+
+Interpretation: these are ordering or usefulness concerns for the stated intents,
+not assertions that every returned page is unrelated. Inspect archived contents
+or confirm relevance with the team before finalizing the labels. Do not claim
+content duplicates solely from similar URLs. ACM remains ambiguous and is not
+needed to pad this ten-query concern list.
+
+What C should write about changes:
+- Length damping, sparse offsets, and partial fill-in are already in the current
+  engine. Describe them as implemented changes only; this run alone cannot
+  prove how much they improved results relative to an earlier version.
+- For later ranking or filtering changes, explain the actual general mechanism
+  and compare the same queries again. Do not write that a problem was fixed
+  before observing the after-change results.
+- Keep the title-field decision explicit: deferred; existing imp includes titles.
+
+Still pending: establish the good-control portion of the final query set, confirm
+the relevance labels, and record actual improvements without harming controls.
+The draft is ready to share; actual delivery/acknowledgment by C is not recorded.
+Final TEST.txt formatting remains C's task. No PDF, screenshot, or full result
+table is required for M3.
