@@ -283,3 +283,48 @@ the relevance labels, and record actual improvements without harming controls.
 The draft is ready to share; actual delivery/acknowledgment by C is not recorded.
 Final TEST.txt formatting remains C's task. No PDF, screenshot, or full result
 table is required for M3.
+
+CONTROL SELECTION UPDATE - NOVEMBER 26, 2026
+Used C's existing evaluate() helper to test 12 control candidates (three runs
+each) with engine 7bdb128 and the same uploaded index/recovered lengths.
+Detailed output stays local in eval/control-candidates-2026-11-26.txt.
+Slowest median in this batch: 144.6 ms. Do not attribute lower timings versus
+the earlier run to a code optimization: hardware load and cache state can vary.
+
+Proposed primary evaluation set: 10 problem queries from the handoff draft
+above, plus the following 10 controls. These are working relevance judgments
+from visible result URLs and explicit intents, not graded relevance labels.
+Controls mean useful topic-related results, not necessarily perfect top-five order.
+
+Control query                       Why retain it / remaining limitation
+master of software engineering      Program homepage first; related program pages follow.
+informatics 121                     Teaching overview and four course pages; overview first
+                                    is acceptable for finding course materials.
+computational vision                Vision research/project pages appear in the top five.
+machine learning                    Classes and ML events are relevant for broad topic discovery.
+artificial intelligence             Course and AAAI-related pages are useful topic matches.
+data mining                         Topic/course pages appear prominently.
+machine learning symposium          The symposium page is first; lower ranks are less direct.
+multimedia information retrieval    MARS research and retrieval-related pages match the topic;
+                                    URL variants reduce diversity and should not worsen.
+computational geometry              Geometry teaching, groups, and reference pages match the topic.
+machine learning repository         Repository citation/about/index pages lead; navigation order
+                                    could improve, but the results identify the correct service.
+
+Rejected as clean controls:
+- data mining seismic bumps: correct first page, but wordlist.txt is second
+  and partial results fill the rest. Keep as a possible future problem query.
+- software engineering admissions: a site map outranks direct admissions pages.
+
+The primary 20-query proposal is now explicit: ten problem queries plus ten
+controls above. Use this explicit selection rather than the old candidate-group
+headings. Undergraduate research stays in the ten problem queries.
+Keep ACM available as a supplemental ambiguous-query check; it remains in the
+original candidate file and M2 records, but is not one of these primary controls.
+The four M2 queries have all already been run and their output is preserved locally.
+
+Handoff to C: confirm/adopt this primary set before further changes and then
+align scripts/queries.txt with it, retaining older output. Do not mix results
+from different query lists and call them a paired comparison. Person A did not
+edit C's script or query input in this step. These baseline observations still
+need team review; no later improvement or delivery acknowledgment is claimed.

@@ -2,6 +2,46 @@
 
 ## Milestone 3 — Person A: Query Evaluation and Parser Ownership
 
+### November 26: Select measured control-query candidates
+
+After merging the teammate changes (engine 7bdb128), used Person C's existing
+`scripts.evaluate.evaluate` function to run 12 candidate controls, three times
+each, against the uploaded index with recovered document lengths. No application
+function or teammate-owned script was edited. The detailed result file stays
+local under ignored eval/; no additional deliverable is introduced.
+
+QUERY_NOTES.txt now proposes a primary 20-query set: the ten problem-query
+comments already drafted for C and ten explicitly listed controls. Existing
+useful topic queries were retained; machine learning symposium, multimedia
+information retrieval, computational geometry, and machine learning repository
+were added as measured control candidates. Their returned URLs provide concrete
+support for the intended topics. A control is judged useful for its stated intent,
+not perfect: MARS URL variants, for example, remain a diversity limitation.
+
+Two tested candidates were not accepted as clean controls. The seismic-bumps
+dataset query puts the intended dataset first but a word list second, and uses
+partial fill-in after two AND matches. The software-engineering-admissions query
+puts a site map above direct admissions information. These observations prevent
+selecting controls solely because the first query word appears in the result.
+
+Slowest median in this batch was 144.6 ms. This is not evidence that the merge
+made search faster: cache state and load differ between runs. No ranking weights
+were tuned. These judgments use result URLs and declared intents; archived HTML
+was not inspected, and the team should confirm the working classification.
+
+The original candidate file is unchanged. C should adopt the agreed primary set
+in scripts/queries.txt and TEST.txt before the next comparison, preserving earlier
+output and using the same final queries for before/after runs. ACM remains a
+supplemental ambiguity check, not a fabricated poor example. All four M2 queries
+were already evaluated; they are not an independent M3 requirement to keep a
+poorly justified good/bad label. The first Person A checklist item now has a
+complete proposed 10/10 classification with reasons, pending team relevance
+review. Delivery to C and measured after-change improvements are still pending.
+
+Validation: reviewed all 12 query blocks and their top-five URLs, recorded the
+selection and rejected cases, and checked git diff --check. This step modifies
+only QUERY_NOTES.txt and DOCUMENT.md; no test rerun is needed for unchanged code.
+
 ### November 26 scope clarification and Person C handoff draft
 
 The required M3 deliverables remain code, plain-text README.txt and TEST.txt,
